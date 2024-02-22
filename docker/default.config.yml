@@ -3,7 +3,7 @@ server:
     bind:
         host: 0.0.0.0
         port: 80
-    url: http://${EC2_PUBLIC_IPV4}:5000 #EC2 Public IPv4 DNS
+    url: http://${INSTANCE_URL}:5000
     mimetype: application/json; charset=UTF-8
     encoding: utf-8
     gzip: false
@@ -55,12 +55,12 @@ metadata:
         role: pointOfContact
 
 resources:
-    gs:
+    fs:
         type: collection
-        title: Gravity Station
-        description: GA Gravity Station from ORARDS
+        title: Field Site
+        description: Geoscience Australia - Field Site data for PID landing page
         keywords:
-            - gravity
+            - fieldsite
             - Geoscience
             - Australia
         links:
@@ -80,18 +80,17 @@ resources:
             - type: feature
               name: OracleDB
               data:
-                  host: ${db_host}
+                  host: ${DB_HOST}
                   port: 1521
-                  service_name: ${db_service}
-                  user: ${db_user}
-                  password: ${db_password}
+                  service_name: ${DB_SERVICE}
+                  user: ${DB_USER}
+                  password: "${DB_PWD}"
                   search_path: ["PUB_DATA", "$user"]
-              id_field: "Station no"
-              table: PUB_DATA.PIDUSER_GRAVITY_STATION
-              title_field: "Station no"
+              id_field: ENO
+              table: PUB_DATA.PIDUSER_VIEW_FIELDSITE
+              title_field: ENO
               geom_field: GEOM
-              url_field: "Station no"
-
+              url_field: ENO
 
     hello-world:
         type: process
