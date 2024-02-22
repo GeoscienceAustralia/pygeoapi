@@ -3,7 +3,7 @@
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #          Norman Barker <norman.barker@gmail.com>
 #
-# Copyright (c) 2023 Tom Kralidis
+# Copyright (c) 2022 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -37,18 +37,16 @@ import click
 from flask import Flask, Blueprint, make_response, request, send_from_directory
 
 from pygeoapi.api import API
-from pygeoapi.openapi import load_openapi_document
-from pygeoapi.config import get_config
-from pygeoapi.util import get_mimetype, get_api_rules
+from pygeoapi.util import get_mimetype, yaml_load, get_api_rules
 
 
-CONFIG = get_config()
-OPENAPI = load_openapi_document()
+if 'PYGEOAPI_CONFIG' not in os.environ:
+    raise RuntimeError('PYGEOAPI_CONFIG environment variable not set')
+
+with open(os.environ.get('PYGEOAPI_CONFIG'), encoding='utf8') as fh:
+    CONFIG = yaml_load(fh)
 
 API_RULES = get_api_rules(CONFIG)
-
-if CONFIG['server'].get('admin'):
-    from pygeoapi.admin import Admin
 
 STATIC_FOLDER = 'static'
 if 'templates' in CONFIG['server']:
@@ -63,7 +61,6 @@ BLUEPRINT = Blueprint(
     static_folder=STATIC_FOLDER,
     url_prefix=API_RULES.get_url_prefix('flask')
 )
-ADMIN_BLUEPRINT = Blueprint('admin', __name__, static_folder=STATIC_FOLDER)
 
 # CORS: optionally enable from config.
 if CONFIG['server'].get('cors', False):
@@ -76,7 +73,7 @@ if CONFIG['server'].get('cors', False):
 APP.config['JSONIFY_PRETTYPRINT_REGULAR'] = CONFIG['server'].get(
     'pretty_print', True)
 
-api_ = API(CONFIG, OPENAPI)
+api_ = API(CONFIG)
 
 OGC_SCHEMAS_LOCATION = CONFIG['server'].get('ogc_schemas_location')
 
@@ -142,7 +139,13 @@ def openapi():
 
     :returns: HTTP response
     """
-    return get_response(api_.openapi_(request))
+    with open(os.environ.get('PYGEOAPI_OPENAPI'), encoding='utf8') as ff:
+        if os.environ.get('PYGEOAPI_OPENAPI').endswith(('.yaml', '.yml')):
+            openapi_ = yaml_load(ff)
+        else:  # JSON string, do not transform
+            openapi_ = ff.read()
+
+    return get_response(api_.openapi(request, openapi_))
 
 
 @BLUEPRINT.route('/conformance')
@@ -153,27 +156,6 @@ def conformance():
     :returns: HTTP response
     """
     return get_response(api_.conformance(request))
-
-
-@BLUEPRINT.route('/TileMatrixSets/<tileMatrixSetId>')
-def get_tilematrix_set(tileMatrixSetId=None):
-    """
-    OGC API TileMatrixSet endpoint
-
-    :param tileMatrixSetId: identifier of tile matrix set
-    :returns: HTTP response
-    """
-    return get_response(api_.tilematrixset(request, tileMatrixSetId))
-
-
-@BLUEPRINT.route('/TileMatrixSets')
-def get_tilematrix_sets():
-    """
-    OGC API TileMatrixSets endpoint
-
-    :returns: HTTP response
-    """
-    return get_response(api_.tilematrixsets(request))
 
 
 @BLUEPRINT.route('/collections')
@@ -482,67 +464,7 @@ def stac_catalog_path(path):
     return get_response(api_.get_stac_path(request, path))
 
 
-@ADMIN_BLUEPRINT.route('/admin/config', methods=['GET', 'PUT', 'PATCH'])
-def admin_config():
-    """
-    Admin endpoint
-
-    :returns: HTTP response
-    """
-
-    if request.method == 'GET':
-        return get_response(admin_.get_config(request))
-
-    elif request.method == 'PUT':
-        return get_response(admin_.put_config(request))
-
-    elif request.method == 'PATCH':
-        return get_response(admin_.patch_config(request))
-
-
-@ADMIN_BLUEPRINT.route('/admin/config/resources', methods=['GET', 'POST'])
-def admin_config_resources():
-    """
-    Resources endpoint
-
-    :returns: HTTP response
-    """
-
-    if request.method == 'GET':
-        return get_response(admin_.get_resources(request))
-
-    elif request.method == 'POST':
-        return get_response(admin_.post_resource(request))
-
-
-@ADMIN_BLUEPRINT.route(
-    '/admin/config/resources/<resource_id>',
-    methods=['GET', 'PUT', 'PATCH', 'DELETE'])
-def admin_config_resource(resource_id):
-    """
-    Resource endpoint
-
-    :returns: HTTP response
-    """
-
-    if request.method == 'GET':
-        return get_response(admin_.get_resource(request, resource_id))
-
-    elif request.method == 'DELETE':
-        return get_response(admin_.delete_resource(request, resource_id))
-
-    elif request.method == 'PUT':
-        return get_response(admin_.put_resource(request, resource_id))
-
-    elif request.method == 'PATCH':
-        return get_response(admin_.patch_resource(request, resource_id))
-
-
 APP.register_blueprint(BLUEPRINT)
-
-if CONFIG['server'].get('admin'):
-    admin_ = Admin(CONFIG, OPENAPI)
-    APP.register_blueprint(ADMIN_BLUEPRINT)
 
 
 @click.command()

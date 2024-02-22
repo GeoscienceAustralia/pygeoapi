@@ -246,10 +246,11 @@ resources:
               storage_crs: http://www.opengis.net/def/crs/OGC/1.3/CRS84
               storage_crs_coordinate_epoch: 2017.23
             - type: tile
-              name: MVT-tippecanoe
+              name: MVT
               # data: http://localhost:9000/ne_110m_lakes/{z}/{x}/{y}
               data: tests/data/tiles/ne_110m_lakes
               options:
+                metadata_format: raw # default | tilejson
                 bounds: [[-124.953634,-16.536406],[109.929807,66.969298]]
                 zoom:
                     min: 0
@@ -281,6 +282,8 @@ resources:
             - type: coverage
               name: rasterio
               data: tests/data/CMC_glb_TMP_TGL_2_latlon.15x.15_2020081000_P000.grib2
+              options:
+                  DATA_ENCODING: COMPLEX_PACKING
               format:
                   name: GRIB
                   mimetype: application/x-grib2
@@ -311,27 +314,28 @@ resources:
                   name: NetCDF
                   mimetype: application/x-netcdf
 
-    usgs-prism:
+    nasa-power:
         type: collection
-        title: Parameter-elevation Regressions on Independent Slopes Model (PRISM)
-        description: PRISM Monthly Climate Data for the Continental United States
+        title: NASA Prediction Of Worldwide Energy Resources (POWER)
+        description: NASA Prediction Of Worldwide Energy Resources (POWER)
         keywords:
-            - temperature
-            - precipitation
+            - nasa
+            - energy
+            - power
         extents:
             spatial:
-                bbox: [-125.020836, 24.104166, -66.520836, 49.9375]
+                bbox: [-180,-90,180,90]
                 crs: http://www.opengis.net/def/crs/OGC/1.3/CRS84
         links:
             - type: text/html
               rel: canonical
               title: information
-              href: https://cida.usgs.gov/thredds/catalog.html?dataset=cida.usgs.gov/prism_v2
+              href: https://power.larc.nasa.gov/
               hreflang: en-US
         providers:
             - type: edr
               name: xarray-edr
-              data: s3://mdmf/gdp/PRISM_v2.zarr
+              data: s3://power-analysis-ready-datastore/power_901_annual_meteorology_utc.zarr
               format:
                   name: zarr
                   mimetype: application/zip
@@ -339,8 +343,6 @@ resources:
                   s3:
                     anon: true
                     requester_pays: false
-                    client_kwargs:
-                        endpoint_url: https://usgs.osn.mghpcc.org/
     
     objects:
         type: collection

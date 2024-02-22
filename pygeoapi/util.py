@@ -30,8 +30,6 @@
 """Generic util functions used in the code"""
 
 import base64
-from copy import deepcopy
-from filelock import FileLock
 import json
 import logging
 import mimetypes
@@ -43,16 +41,14 @@ from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
-import pathlib
 from pathlib import Path
-from typing import Any, IO, Union, List, Optional, Callable
+from typing import Any, IO, Union, List, Callable
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
 import dateutil.parser
-from shapely import ops
+import shapely.ops
 from shapely.geometry import (
-    box,
     GeometryCollection,
     LinearRing,
     LineString,
@@ -67,8 +63,6 @@ from shapely.geometry import (
 import yaml
 from babel.support import Translations
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-import pygeofilter.ast
-import pygeofilter.values
 import pyproj
 from pyproj.exceptions import CRSError
 from requests import Session
@@ -84,8 +78,22 @@ LOGGER = logging.getLogger(__name__)
 
 DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 
-THISDIR = Path(__file__).parent.resolve()
-TEMPLATES = THISDIR / 'templates'
+TEMPLATES = Path(__file__).parent.resolve() / 'templates'
+
+CRS_AUTHORITY = [
+    "AUTO",
+    "EPSG",
+    "OGC",
+]
+
+# Global to compile only once
+CRS_URI_PATTERN = re.compile(
+    (
+     rf"^http://www.opengis\.net/def/crs/"
+     rf"(?P<auth>{'|'.join(CRS_AUTHORITY)})/"
+     rf"[\d|\.]+?/(?P<code>\w+?)$"
+    )
+)
 
 
 # Type for Shapely geometrical objects.
@@ -198,32 +206,6 @@ def get_base_url(config: dict) -> str:
     """ Returns the full pygeoapi base URL. """
     rules = get_api_rules(config)
     return url_join(config['server']['url'], rules.get_url_prefix())
-
-
-def yaml_dump(dict_: dict, destfile: str) -> bool:
-    """
-    Dump dict to YAML file
-
-    :param dict_: `dict` to dump
-    :param destfile: destination filepath
-
-    :returns: `bool`
-    """
-
-    def path_representer(dumper, data):
-        return dumper.represent_scalar(u'tag:yaml.org,2002:str', str(data))
-
-    yaml.add_multi_representer(pathlib.PurePath, path_representer)
-
-    lock = FileLock(f'{destfile}.lock')
-
-    with lock:
-        LOGGER.debug('Dumping YAML document')
-        with open(destfile, 'wb') as fh:
-            yaml.dump(dict_, fh, sort_keys=False, encoding='utf8', indent=4,
-                      default_flow_style=False)
-
-    return True
 
 
 def str2bool(value: Union[bool, str]) -> bool:
@@ -376,18 +358,16 @@ def json_serial(obj: Any) -> str:
             return base64.b64encode(obj)
     elif isinstance(obj, Decimal):
         return float(obj)
-    elif type(obj).__name__ in ['int32', 'int64']:
+    elif type(obj).__name__ == 'int64':
         return int(obj)
-    elif type(obj).__name__ in ['float32', 'float64']:
+    elif type(obj).__name__ == 'float64':
         return float(obj)
     elif isinstance(obj, l10n.Locale):
         return l10n.locale2str(obj)
-    elif isinstance(obj, (pathlib.PurePath, Path)):
-        return str(obj)
-    else:
-        msg = f'{obj} type {type(obj)} not serializable'
-        LOGGER.error(msg)
-        raise TypeError(msg)
+
+    msg = f'{obj} type {type(obj)} not serializable'
+    LOGGER.error(msg)
+    raise TypeError(msg)
 
 
 def is_url(urlstring: str) -> bool:
@@ -674,9 +654,7 @@ def get_crs_from_uri(uri: str) -> pyproj.CRS:
     Author: @MTachon
 
     :param uri: Uniform resource identifier of the coordinate
-        reference system. In accordance with
-        https://docs.ogc.org/pol/09-048r5.html#_naming_rule URIs can
-        take either the form of a URL or a URN
+        reference system.
     :type uri: str
 
     :raises `CRSError`: Error raised if no CRS could be identified from the
@@ -686,26 +664,23 @@ def get_crs_from_uri(uri: str) -> pyproj.CRS:
     :rtype: `pyproj.CRS`
     """
 
-    # normalize the input `uri` to a URL first
-    url = uri.replace(
-        "urn:ogc:def:crs",
-        "http://www.opengis.net/def/crs"
-    ).replace(":", "/")
     try:
-        authority, code = url.rsplit("/", maxsplit=3)[1::2]
-        crs = pyproj.CRS.from_authority(authority, code)
-    except ValueError:
+        crs = pyproj.CRS.from_authority(*CRS_URI_PATTERN.search(uri).groups())
+    except CRSError:
         msg = (
-            f"CRS could not be identified from URI {uri!r}. CRS URIs must "
-            "follow one of two formats: "
-            "'http://www.opengis.net/def/crs/{authority}/{version}/{code}' or "
-            "'urn:ogc:def:crs:{authority}:{version}:{code}' "
-            "(see https://docs.opengeospatial.org/is/18-058r1/18-058r1.html#crs-overview)."  # noqa
+            f"CRS could not be identified from URI {uri!r} "
+            f"(Authority: {CRS_URI_PATTERN.search(uri).group('auth')!r}, "
+            f"Code: {CRS_URI_PATTERN.search(uri).group('code')!r})."
         )
         LOGGER.error(msg)
         raise CRSError(msg)
-    except CRSError:
-        msg = f"CRS could not be identified from URI {uri!r}"
+    except AttributeError:
+        msg = (
+            f"CRS could not be identified from URI {uri!r}. CRS URIs must "
+            "follow the format "
+            "'http://www.opengis.net/def/crs/{authority}/{version}/{code}' "
+            "(see https://docs.opengeospatial.org/is/18-058r1/18-058r1.html#crs-overview)."  # noqa
+        )
         LOGGER.error(msg)
         raise CRSError(msg)
     else:
@@ -735,7 +710,7 @@ def get_transform_from_crs(
     crs_transform = pyproj.Transformer.from_crs(
         crs_in, crs_out, always_xy=always_xy,
     ).transform
-    return partial(ops.transform, crs_transform)
+    return partial(shapely.ops.transform, crs_transform)
 
 
 def crs_transform(func):
@@ -846,7 +821,6 @@ class UrlPrefetcher:
     """ Prefetcher to get HTTP headers for specific URLs.
     Allows a maximum of 1 redirect by default.
     """
-
     def __init__(self):
         self._session = Session()
         self._session.max_redirects = 1
@@ -866,142 +840,3 @@ class UrlPrefetcher:
         except Exception:  # noqa
             return CaseInsensitiveDict()
         return response.headers
-
-
-def bbox2geojsongeometry(bbox: list) -> dict:
-    """
-    Converts bbox values into GeoJSON geometry
-
-    :param bbox: `list` of minx, miny, maxx, maxy
-
-    :returns: `dict` of GeoJSON geometry
-    """
-
-    b = box(*bbox, ccw=False)
-    return geom_to_geojson(b)
-
-
-def modify_pygeofilter(
-        ast_tree: pygeofilter.ast.Node,
-        *,
-        filter_crs_uri: str,
-        storage_crs_uri: Optional[str] = None,
-        geometry_column_name: Optional[str] = None
-) -> pygeofilter.ast.Node:
-    """
-    Modifies the input pygeofilter with information from the provider.
-
-    :param ast_tree: `pygeofilter.ast.Node` representing the
-    already parsed pygeofilter expression
-    :param filter_crs_uri: URI of the CRS being used in the filtering
-    expression
-    :param storage_crs_uri: An optional string containing the URI of
-    the provider's storage CRS
-    :param geometry_column_name: An optional string containing the
-    actual name of the provider's geometry field
-    :returns: A new pygeofilter.ast.Node, with the modified filter
-    expression
-
-    This function modifies the parsed pygeofilter that contains the raw
-    filter expression provided by an external client. It performs the
-    following modifications:
-
-    - if the filter includes any spatial coordinates and they are being
-      provided in a different CRS from the provider's storage CRS, the
-      corresponding geometries are transformed into the storage CRS
-
-    - if the filter includes the generic 'geometry' name as a reference to
-      the actual geometry of features, it is replaced by the actual name
-      of the geometry field, as specified by the provider
-
-    """
-    new_tree = deepcopy(ast_tree)
-    if storage_crs_uri:
-        storage_crs = get_crs_from_uri(storage_crs_uri)
-        filter_crs = get_crs_from_uri(filter_crs_uri)
-        _inplace_transform_filter_geometries(new_tree, filter_crs, storage_crs)
-    if geometry_column_name:
-        _inplace_replace_geometry_filter_name(new_tree, geometry_column_name)
-    return new_tree
-
-
-def _inplace_transform_filter_geometries(
-        node: pygeofilter.ast.Node,
-        filter_crs: pyproj.CRS,
-        storage_crs: pyproj.CRS
-):
-    """
-    Recursively traverse node tree and convert coordinates to the storage CRS.
-
-    This function modifies nodes in the already-parsed filter in order to find
-    any geometry literals that may be used in the filter and, if necessary,
-    proceeds to convert spatial coordinates to the CRS used by the provider.
-    """
-    try:
-        sub_nodes = node.get_sub_nodes()
-    except AttributeError:
-        pass
-    else:
-        for sub_node in sub_nodes:
-            is_geometry_node = isinstance(
-                sub_node, pygeofilter.values.Geometry)
-            if is_geometry_node:
-                # NOTE1: To be flexible, and since pygeofilter
-                # already supports it, in addition to supporting
-                # the `filter-crs` parameter, we also support having a
-                # geometry defined in EWKT, meaning the CRS is provided
-                # inline, like this `SRID=<CRS_CODE>;<WKT>` - If provided,
-                # this overrides the value of `filter-crs`. This enables
-                # supporting, for example, an exotic filter expression with
-                # multiple geometries specified in different CRSs
-
-                # NOTE2: We specify a default CRS using a URI of type URN
-                # because this is what pygeofilter uses internally too
-
-                crs_urn_provided_in_ewkt = sub_node.geometry.get(
-                    'crs', {}).get('properties', {}).get('name')
-                if crs_urn_provided_in_ewkt is not None:
-                    crs = get_crs_from_uri(crs_urn_provided_in_ewkt)
-                else:
-                    crs = filter_crs
-                if crs != storage_crs:
-                    # convert geometry coordinates to storage crs
-                    geom = geojson_to_geom(sub_node.geometry)
-                    coord_transformer = pyproj.Transformer.from_crs(
-                        crs_from=crs, crs_to=storage_crs).transform
-                    transformed_geom = ops.transform(coord_transformer, geom)
-                    sub_node.geometry = geom_to_geojson(transformed_geom)
-                # ensure the crs is encoded in the sub-node, otherwise
-                # pygeofilter will assign it its own default CRS
-                authority, code = storage_crs.to_authority()
-                sub_node.geometry['crs'] = {
-                    'properties': {
-                        'name': f'urn:ogc:def:crs:{authority}::{code}'
-                    }
-                }
-            else:
-                _inplace_transform_filter_geometries(
-                    sub_node, filter_crs, storage_crs)
-
-
-def _inplace_replace_geometry_filter_name(
-        node: pygeofilter.ast.Node,
-        geometry_column_name: str
-):
-    """Recursively traverse node tree and rename nodes of type ``Attribute``.
-
-    Nodes of type ``Attribute`` named ``geometry`` are renamed to the value of
-    the ``geometry_column_name`` parameter.
-    """
-    try:
-        sub_nodes = node.get_sub_nodes()
-    except AttributeError:
-        pass
-    else:
-        for sub_node in sub_nodes:
-            is_attribute_node = isinstance(sub_node, pygeofilter.ast.Attribute)
-            if is_attribute_node and sub_node.name == "geometry":
-                sub_node.name = geometry_column_name
-            else:
-                _inplace_replace_geometry_filter_name(
-                    sub_node, geometry_column_name)

@@ -33,38 +33,17 @@ import click
 import json
 from jsonschema import validate as jsonschema_validate
 import logging
-import os
-import yaml
+from pathlib import Path
 
-from pygeoapi.util import to_json, yaml_load, THISDIR
+from pygeoapi.util import to_json, yaml_load
 
 LOGGER = logging.getLogger(__name__)
 
-
-def get_config(raw: bool = False) -> dict:
-    """
-    Get pygeoapi configurations
-
-    :param raw: `bool` over interpolation during config loading
-
-    :returns: `dict` of pygeoapi configuration
-    """
-
-    if not os.environ.get('PYGEOAPI_CONFIG'):
-        raise RuntimeError('PYGEOAPI_CONFIG environment variable not set')
-
-    with open(os.environ.get('PYGEOAPI_CONFIG'), encoding='utf8') as fh:
-        if raw:
-            CONFIG = yaml.safe_load(fh)
-        else:
-            CONFIG = yaml_load(fh)
-
-    return CONFIG
+THISDIR = Path(__file__).parent.resolve()
 
 
 def load_schema() -> dict:
     """ Reads the JSON schema YAML file. """
-
     schema_file = THISDIR / 'schemas' / 'config' / 'pygeoapi-config-0.x.yml'
 
     with schema_file.open() as fh2:
@@ -79,7 +58,6 @@ def validate_config(instance_dict: dict) -> bool:
 
     :returns: `bool` of validation
     """
-
     jsonschema_validate(json.loads(to_json(instance_dict)), load_schema())
 
     return True

@@ -30,24 +30,20 @@
 import importlib
 import json
 import logging
-import oracledb
-import pyproj
 from typing import Optional
 
-from pygeoapi.api import DEFAULT_STORAGE_CRS
+import oracledb
 
 from pygeoapi.provider.base import (
     BaseProvider,
     ProviderConnectionError,
-    ProviderGenericError,
-    ProviderInvalidQueryError,
     ProviderItemNotFoundError,
     ProviderQueryError,
 )
 
-from pygeoapi.util import get_crs_from_uri
-
 LOGGER = logging.getLogger(__name__)
+
+oracledb.init_oracle_client()
 
 
 class DatabaseConnection:
@@ -103,7 +99,7 @@ class DatabaseConnection:
                 )
 
                 if "tns_name" not in self.conn_dict:
-                    raise ProviderConnectionError(
+                    raise Exception(
                         "tns_name must be set for external authentication!"
                     )
 
@@ -117,7 +113,7 @@ class DatabaseConnection:
                 )
 
                 if "host" not in self.conn_dict:
-                    raise ProviderConnectionError(
+                    raise Exception(
                         "Host must be set for connection with service_name!"
                     )
 
@@ -134,7 +130,7 @@ class DatabaseConnection:
                 )
 
                 if "host" not in self.conn_dict:
-                    raise ProviderConnectionError(
+                    raise Exception(
                         "Host must be set for connection with sid!"
                     )
 
@@ -190,8 +186,7 @@ class DatabaseConnection:
             LOGGER.error(e)
             raise ProviderConnectionError(e)
 
-        # Check if table name has schema/owner inside
-        # If not, current user is set
+        # Check if table name has schema inside
         table_parts = self.table.split(".")
         if len(table_parts) == 2:
             schema = table_parts[0]
@@ -203,23 +198,34 @@ class DatabaseConnection:
         LOGGER.debug("Schema: " + schema)
         LOGGER.debug("Table: " + table)
 
+        self.cur = self.conn.cursor()
         if self.context == "query":
-            column_list = self._get_table_columns(schema, table)
+            # Get table column names and types, excluding geometry
+            query_cols = "select column_name, data_type \
+                            from all_tab_columns \
+                           where table_name = UPPER(:table_name) \
+                             and owner = UPPER(:owner) \
+                             and data_type != 'SDO_GEOMETRY'"
+
+            self.cur.execute(
+                query_cols, {"table_name": table, "owner": schema}
+            )
+            result = self.cur.fetchall()
 
             # When self.properties is set, then the result would be filtered
             if self.properties:
-                column_list = [
-                    col
-                    for col in column_list
-                    if col[0].lower()
+                result = [
+                    res
+                    for res in result
+                    if res[0].lower()
                     in [item.lower() for item in self.properties]
                 ]
 
             # Concatenate column names with ', '
-            self.columns = ", ".join([item[0].lower() for item in column_list])
+            self.columns = ", ".join([f"\"{item[0]}\"" for item in result])
 
             # Populate dictionary for columns with column type
-            for k, v in dict(column_list).items():
+            for k, v in dict(result).items():
                 self.fields[k.lower()] = {"type": v}
 
         return self
@@ -228,82 +234,12 @@ class DatabaseConnection:
         # some logic to commit/rollback
         self.conn.close()
 
-    def _get_table_columns(self, schema, table):
-        """
-        Returns an array with all column names and data types
-        from Oracle table ALL_TAB_COLUMNS.
-        Lookup for public and private synonyms.
-        Throws ProviderGenericError when table not exist or accesable.
-        """
-
-        sql = """
-              SELECT COUNT(1)
-                FROM all_objects
-               WHERE object_type IN ('VIEW','TABLE','MATERIALIZED VIEW')
-                 AND object_name = UPPER(:table_name)
-                 AND owner = UPPER(:owner)
-              """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, {"table_name": table, "owner": schema})
-            result = cur.fetchone()
-
-        if result[0] == 0:
-            sql = """
-                  SELECT COUNT(1)
-                    FROM all_synonyms
-                   WHERE synonym_name = UPPER(:table_name)
-                     AND owner = UPPER(:owner)
-                  """
-            with self.conn.cursor() as cur:
-                cur.execute(sql, {"table_name": table, "owner": schema})
-                result = cur.fetchone()
-
-            if result[0] == 0:
-                sql = """
-                      SELECT COUNT(1)
-                        FROM all_synonyms
-                       WHERE synonym_name = UPPER(:table_name)
-                         AND owner = 'PUBLIC'
-                      """
-                with self.conn.cursor() as cur:
-                    cur.execute(sql, {"table_name": table})
-                    result = cur.fetchone()
-
-                if result[0] == 0:
-                    raise ProviderGenericError(
-                        f"Table {schema}.{table} not found!"
-                    )
-
-                else:
-                    schema = "PUBLIC"
-
-            sql = """
-                  SELECT table_owner, table_name
-                    FROM all_synonyms
-                   WHERE synonym_name = UPPER(:table_name)
-                     AND owner = UPPER(:owner)
-                  """
-            with self.conn.cursor() as cur:
-                cur.execute(sql, {"table_name": table, "owner": schema})
-                result = cur.fetchone()
-
-            schema = result[0]
-            table = result[1]
-
-        # Get table column names and types, excluding geometry
-        query_cols = """
-                     SELECT column_name, data_type
-                       FROM all_tab_columns
-                      WHERE table_name = UPPER(:table_name)
-                        AND owner = UPPER(:owner)
-                        AND data_type != 'SDO_GEOMETRY'
-                     """
-        with self.conn.cursor() as cur:
-            cur.execute(query_cols, {"table_name": table, "owner": schema})
-            result = cur.fetchall()
-
-        return result
-
+MESSAGE_LEVEL = 10
+LOGFILE_NAME = 'pygeoapi.log'
+def msg(m,s=10):
+        if s >= MESSAGE_LEVEL:
+            with open(LOGFILE_NAME, 'a') as f:
+                f.write('{}\n'.format(m))
 
 class OracleProvider(BaseProvider):
     def __init__(self, provider_def):
@@ -320,42 +256,28 @@ class OracleProvider(BaseProvider):
 
         super().__init__(provider_def)
 
-        # Table properties
         self.table = provider_def["table"]
         self.id_field = provider_def["id_field"]
         self.conn_dic = provider_def["data"]
         self.geom = provider_def["geom_field"]
         self.properties = [item.lower() for item in self.properties]
-        self.mandatory_properties = provider_def.get("mandatory_properties")
 
-        # SQL manipulator properties
         self.sql_manipulator = provider_def.get("sql_manipulator")
         self.sql_manipulator_options = provider_def.get(
             "sql_manipulator_options"
         )
-
-        # CRS properties
-        storage_crs_uri = provider_def.get("storage_crs", DEFAULT_STORAGE_CRS)
-        self.storage_crs = get_crs_from_uri(storage_crs_uri)
-
-        # TODO See Issue #1393
-        # default_crs_uri = provider_def.get("default_crs", DEFAULT_CRS)
-        # self.default_crs = get_crs_from_uri(default_crs_uri)
-
-        # SDO properties
-        self.sdo_param = provider_def.get("sdo_param")
-        self.sdo_operator = provider_def.get("sdo_operator", "sdo_filter")
+        self.mandatory_properties = provider_def.get("mandatory_properties")
+        self.source_crs = provider_def.get("source_crs", 4326)
+        self.target_crs = provider_def.get("target_crs", 4326)
+        self.sdo_mask = provider_def.get("sdo_mask", "anyinteraction")
 
         LOGGER.debug("Setting Oracle properties:")
         LOGGER.debug(f"Name:{self.name}")
         LOGGER.debug(f"ID_field:{self.id_field}")
         LOGGER.debug(f"Table:{self.table}")
-        LOGGER.debug(f"sdo_param: {self.sdo_param}")
-        LOGGER.debug(f"sdo_operator: {self.sdo_operator}")
-        LOGGER.debug(f"storage_crs {self.storage_crs}")
-
-        # TODO See Issue #1393
-        # LOGGER.debug(f"default_crs: {self.default_crs}")
+        LOGGER.debug(f"source_crs: {self.source_crs}")
+        LOGGER.debug(f"target_crs: {self.target_crs}")
+        LOGGER.debug(f"sdo_mask: {self.sdo_mask}")
 
         self.get_fields()
 
@@ -375,12 +297,7 @@ class OracleProvider(BaseProvider):
         return self.fields
 
     def _get_where_clauses(
-        self,
-        properties,
-        bbox,
-        bbox_crs,
-        sdo_param=None,
-        sdo_operator="sdo_filter",
+        self, properties, bbox, bbox_crs, sdo_mask="anyinteraction"
     ):
         """
         Generarates WHERE conditions to be implemented in query.
@@ -404,72 +321,33 @@ class OracleProvider(BaseProvider):
         if bbox:
             bbox_dict = {"clause": "", "properties": {}}
 
-            if sdo_operator == "sdo_relate":
-                if not sdo_param:
-                    sdo_param = "mask=anyinteract"
+            sdo_mask = f"mask={sdo_mask}"
 
-                bbox_dict["properties"] = {
-                    "srid": self._get_srid_from_crs(bbox_crs),
-                    "minx": bbox[0],
-                    "miny": bbox[1],
-                    "maxx": bbox[2],
-                    "maxy": bbox[3],
-                    "sdo_param": sdo_param,
-                }
+            bbox_dict["properties"] = {
+                "srid": bbox_crs or 4326,
+                "minx": bbox[0],
+                "miny": bbox[1],
+                "maxx": bbox[2],
+                "maxy": bbox[3],
+                "sdo_mask": sdo_mask,
+            }
 
-                bbox_query = f"""
-                sdo_relate({self.geom},
-                           mdsys.sdo_geometry(2003,
-                                              :srid,
-                                              NULL,
-                                              mdsys.sdo_elem_info_array(
-                                                    1,
-                                                    1003,
-                                                    3
-                                              ),
-                                              mdsys.sdo_ordinate_array(
-                                                    :minx,
-                                                    :miny,
-                                                    :maxx,
-                                                    :maxy
-                                              )
-                           ),
-                           :sdo_param
-                ) = 'TRUE'
-                """
-
-            else:
-                bbox_dict["properties"] = {
-                    "srid": self._get_srid_from_crs(bbox_crs),
-                    "minx": bbox[0],
-                    "miny": bbox[1],
-                    "maxx": bbox[2],
-                    "maxy": bbox[3],
-                    "sdo_param": sdo_param,
-                }
-
-                bbox_query = f"""
-                sdo_filter({self.geom},
-                           mdsys.sdo_geometry(2003,
-                                              :srid,
-                                              NULL,
-                                              mdsys.sdo_elem_info_array(
-                                                    1,
-                                                    1003,
-                                                    3
-                                              ),
-                                              mdsys.sdo_ordinate_array(
-                                                    :minx,
-                                                    :miny,
-                                                    :maxx,
-                                                    :maxy
-                                              )
-                           ),
-                           :sdo_param
-                ) = 'TRUE'
-                """
-
-            bbox_dict["clause"] = bbox_query
+            bbox_dict[
+                "clause"
+            ] = f"sdo_relate({self.geom}, \
+                             mdsys.sdo_geometry(2003, \
+                                                :srid, \
+                                                NULL, \
+                                                mdsys.sdo_elem_info_array(\
+                                                    1, \
+                                                    1003, \
+                                                    3\
+                                                ), \
+                             mdsys.sdo_ordinate_array(:minx, \
+                                                      :miny, \
+                                                      :maxx, \
+                                                      :maxy)), \
+                             :sdo_mask) = 'TRUE'"
 
             where_conditions.append(bbox_dict["clause"])
             where_dict["properties"].update(bbox_dict["properties"])
@@ -511,20 +389,6 @@ class OracleProvider(BaseProvider):
                 oracledb.DB_TYPE_LONG_RAW, arraysize=cursor.arraysize
             )
 
-    def _get_srid_from_crs(self, crs):
-        """
-        Works only for EPSG codes!
-        Anything else is hard coded!
-        """
-        if crs == "OGC:CRS84":
-            srid = 4326
-        elif crs == "OGC:CRS84h":
-            srid = 4326
-        else:
-            srid = crs.to_epsg()
-
-        return srid
-
     def query(
         self,
         offset=0,
@@ -534,11 +398,9 @@ class OracleProvider(BaseProvider):
         datetime_=None,
         properties=[],
         sortby=[],
-        skip_geometry=False,
         select_properties=[],
-        crs_transform_spec=None,
+        skip_geometry=False,
         q=None,
-        language=None,
         filterq=None,
         **kwargs,
     ):
@@ -565,12 +427,12 @@ class OracleProvider(BaseProvider):
         if self.mandatory_properties:
             for mand_col in self.mandatory_properties:
                 if mand_col == "bbox" and not bbox:
-                    raise ProviderInvalidQueryError(
+                    raise ProviderQueryError(
                         f"Missing mandatory filter property: {mand_col}"
                     )
                 else:
                     if mand_col not in property_dict:
-                        raise ProviderInvalidQueryError(
+                        raise ProviderQueryError(
                             f"Missing mandatory filter property: {mand_col}"
                         )
 
@@ -586,9 +448,8 @@ class OracleProvider(BaseProvider):
                 where_dict = self._get_where_clauses(
                     properties=properties,
                     bbox=bbox,
-                    bbox_crs=self.storage_crs,
-                    sdo_param=self.sdo_param,
-                    sdo_operator=self.sdo_operator,
+                    bbox_crs=self.source_crs,
+                    sdo_mask=self.sdo_mask,
                 )
 
                 # Not dangerous to use self.table as substitution,
@@ -628,49 +489,26 @@ class OracleProvider(BaseProvider):
             where_dict = self._get_where_clauses(
                 properties=properties,
                 bbox=bbox,
-                bbox_crs=self.storage_crs,
-                sdo_param=self.sdo_param,
-                sdo_operator=self.sdo_operator,
+                bbox_crs=self.source_crs,
+                sdo_mask=self.sdo_mask,
             )
-
-            # Get correct SRID
-            if crs_transform_spec is not None:
-                source_crs = pyproj.CRS.from_wkt(
-                    crs_transform_spec.source_crs_wkt
-                )
-                source_srid = self._get_srid_from_crs(source_crs)
-
-                target_crs = pyproj.CRS.from_wkt(
-                    crs_transform_spec.target_crs_wkt
-                )
-                target_srid = self._get_srid_from_crs(target_crs)
-            else:
-                source_srid = self._get_srid_from_crs(self.storage_crs)
-                target_srid = source_srid
-
-                # TODO See Issue #1393
-                # target_srid = self._get_srid_from_crs(self.default_crs)
-                # If issue is not accepted, this block can be merged with
-                # the following block.
-
-            LOGGER.debug(f"source_srid: {source_srid}")
-            LOGGER.debug(f"target_srid: {target_srid}")
 
             # Build geometry column call
             #   When a different output CRS is definded, the geometry
             #   geometry column would be transformed.
             if skip_geometry:
                 geom = ""
-
-            elif source_srid != target_srid:
-                geom = f""", sdo_cs.transform(t1.{self.geom},
-                                             :target_srid).get_geojson()
-                             AS geometry """
-
+            elif (
+                not skip_geometry
+                and self.target_crs
+                and self.target_crs != self.source_crs
+            ):
+                geom = f", sdo_cs.transform(t1.{self.geom}, \
+                                            :target_srid).get_geojson() \
+                            AS geometry "
                 where_dict["properties"].update(
-                    {"target_srid": int(target_srid)}
+                    {"target_srid": int(self.target_crs)}
                 )
-
             else:
                 geom = f", t1.{self.geom}.get_geojson() AS geometry "
 
@@ -704,19 +542,9 @@ class OracleProvider(BaseProvider):
                     sql_query,
                     bind_variables,
                     self.sql_manipulator_options,
-                    offset,
-                    limit,
-                    resulttype,
                     bbox,
-                    datetime_,
+                    self.source_crs,
                     properties,
-                    sortby,
-                    skip_geometry,
-                    select_properties,
-                    crs_transform_spec,
-                    q,
-                    language,
-                    filterq,
                 )
 
             # Clean up placeholders that aren't used by the
@@ -758,18 +586,24 @@ class OracleProvider(BaseProvider):
 
         :returns: feature id
         """
-        sql = f"SELECT {self.id_field} AS id \
+        sql = f"SELECT \"{self.id_field}\" AS id \
                   FROM {self.table} \
                  WHERE ROWNUM = 1 \
-                   AND {self.id_field} < :{self.id_field} \
-                 ORDER BY {self.id_field} DESC"
+                   AND \"{self.id_field}\" < {identifier} \
+                 ORDER BY \"{self.id_field}\" DESC"
+        
+        ###debug
+        msg("Printing sql: {}".format(sql))
+        msg("Printing table: {}".format(self.table))
+        msg("Printing id_field: {}".format(self.id_field))
+        msg("Printing identifier: {}".format(identifier))
 
-        bind_variables = {self.id_field: identifier}
+        #bind_variables = {self.id_field: identifier}
 
         LOGGER.debug(f"SQL Query: {sql}")
-        LOGGER.debug(f"Bind variables: {str(bind_variables)}")
+        #LOGGER.debug(f"Bind variables: {str(bind_variables)}")
 
-        cursor.execute(sql, bind_variables)
+        cursor.execute(sql)#, bind_variables)
 
         item = cursor.fetchall()
         id = item[0][0] if item else None
@@ -784,25 +618,25 @@ class OracleProvider(BaseProvider):
 
         :returns: feature id
         """
-        sql = f"SELECT {self.id_field} AS id \
+        sql = f"SELECT \"{self.id_field}\" AS id \
                   FROM {self.table} \
                  WHERE ROWNUM = 1 \
-                   AND {self.id_field} > :{self.id_field} \
-                 ORDER BY {self.id_field} ASC"
+                   AND \"{self.id_field}\" > {identifier} \
+                 ORDER BY \"{self.id_field}\" ASC"
 
-        bind_variables = {self.id_field: identifier}
+        #bind_variables = {self.id_field: identifier}
 
         LOGGER.debug(f"SQL Query: {sql}")
-        LOGGER.debug(f"Bind variables: {str(bind_variables)}")
+        #LOGGER.debug(f"Bind variables: {str(bind_variables)}")
 
-        cursor.execute(sql, bind_variables)
+        cursor.execute(sql)#, bind_variables)
 
         item = cursor.fetchall()
         id = item[0][0] if item else None
 
         return id
 
-    def get(self, identifier, crs_transform_spec=None, **kwargs):
+    def get(self, identifier, **kwargs):
         """
         Query the provider for a specific
         feature id e.g: /collections/ocrl_lakes/items/1
@@ -820,47 +654,17 @@ class OracleProvider(BaseProvider):
             cursor = db.conn.cursor()
 
             crs_dict = {}
-
-            # Get correct SRIDs
-            if crs_transform_spec is not None:
-                source_crs = pyproj.CRS.from_wkt(
-                    crs_transform_spec.source_crs_wkt
-                )
-                source_srid = self._get_srid_from_crs(source_crs)
-
-                target_crs = pyproj.CRS.from_wkt(
-                    crs_transform_spec.target_crs_wkt
-                )
-                target_srid = self._get_srid_from_crs(target_crs)
-
-            else:
-                source_srid = self._get_srid_from_crs(self.storage_crs)
-                target_srid = source_srid
-
-                # TODO See Issue #1393
-                # target_srid = self._get_srid_from_crs(self.default_crs)
-                # If issue is not accepted, this block can be merged with
-                # the following block.
-
-            LOGGER.debug(f"source_srid: {source_srid}")
-            LOGGER.debug(f"target_srid: {target_srid}")
-
-            # Build geometry column call
-            #   When a different output CRS is definded, the geometry
-            #   geometry column would be transformed.
-            if source_srid != target_srid:
-                crs_dict = {"target_srid": target_srid}
-
-                geom_sql = f""", sdo_cs.transform(t1.{self.geom},
-                                             :target_srid).get_geojson()
-                                    AS geometry """
-
+            if self.target_crs and self.target_crs != self.source_crs:
+                geom_sql = f", sdo_cs.transform(t1.{self.geom}, \
+                                                :target_srid).get_geojson() \
+                                AS geometry "
+                crs_dict = {"target_srid": int(self.target_crs)}
             else:
                 geom_sql = f", t1.{self.geom}.get_geojson() AS geometry "
 
             sql_query = f"SELECT {db.columns} {geom_sql} \
                             FROM {self.table} t1 \
-                           WHERE {self.id_field} = :in_id"
+                           WHERE \"{self.id_field}\" = :in_id"
 
             bind_variables = {"in_id": identifier, **crs_dict}
 
@@ -928,7 +732,7 @@ class OracleProvider(BaseProvider):
                 feature["geometry"] = None
 
             feature["properties"] = {
-                key.lower(): value
+                key: value
                 for (key, value) in row_data.items()
                 if key != "GEOMETRY"
             }
@@ -989,32 +793,24 @@ class OracleProvider(BaseProvider):
             columns_str = ", ".join([col for col in columns])
             values_str = ", ".join([f":{col}" for col in columns])
 
-            sql_query = f"""
-                        INSERT INTO {self.table} (
-                            {columns_str},
-                            {self.geom}
-                        )
-                        VALUES (
-                            {values_str},
-                            sdo_util.from_geojson(:in_geometry, NULL, :srid)
-                        )
-                        RETURNING {self.id_field} INTO :out_id
-                        """
+            sql_query = f"INSERT INTO {self.table} (\
+                            {columns_str}, \
+                            {self.geom}) \
+                          VALUES ({values_str}, :in_geometry) \
+                          RETURNING {self.id_field} INTO :out_id"
 
             # Out bind variable for the id of the created row
             out_id = cursor.var(int)
 
             # Bind variable for the SDO_GEOMETRY type
-            # in_geometry = self._get_sdo_from_geojson_geometry(
-            #     db.conn, request_data.get("geometry").get("coordinates")[0]
-            # )
-            in_geometry = request_data.get("geometry")
+            in_geometry = self._get_sdo_from_geojson_geometry(
+                db.conn, request_data.get("geometry").get("coordinates")[0]
+            )
 
             bind_variables = {
                 **bind_variables,
                 "out_id": out_id,
-                "in_geometry": json.dumps(in_geometry),
-                "srid": self._get_srid_from_crs(self.storage_crs),
+                "in_geometry": in_geometry,
             }
 
             # SQL manipulation plugin
@@ -1090,28 +886,20 @@ class OracleProvider(BaseProvider):
 
             set_str = ", ".join([f" {col} = :{col}" for col in columns])
 
-            sql_query = f"""
-                        UPDATE {self.table}
-                           SET {set_str}
-                             , {self.geom} = sdo_util.from_geojson(
-                                                 :in_geometry,
-                                                 NULL,
-                                                 :srid
-                                             )
-                         WHERE {self.id_field} = :in_id
-                        """
+            sql_query = f"UPDATE {self.table} \
+                             SET {set_str} \
+                               , {self.geom} = :in_geometry \
+                           WHERE {self.id_field} = :in_id"
 
             # Bind variable for the SDO_GEOMETRY type
-            # in_geometry = self._get_sdo_from_geojson_geometry(
-            #     db.conn, request_data.get("geometry").get("coordinates")[0]
-            # )
-            in_geometry = json.dumps(request_data.get("geometry"))
+            in_geometry = self._get_sdo_from_geojson_geometry(
+                db.conn, request_data.get("geometry").get("coordinates")[0]
+            )
 
             bind_variables = {
                 **bind_variables,
                 "in_id": identifier,
                 "in_geometry": in_geometry,
-                "srid": self._get_srid_from_crs(self.storage_crs),
             }
 
             # SQL manipulation plugin

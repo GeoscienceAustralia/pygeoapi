@@ -52,8 +52,6 @@ from pygeoapi.util import (yaml_load, get_crs_from_uri,
 from .util import (get_test_file_path, mock_request,
                    mock_flask, mock_starlette)
 
-from pygeoapi.models.provider.base import TileMatrixSetEnum
-
 LOGGER = logging.getLogger(__name__)
 
 
@@ -91,27 +89,27 @@ def openapi():
 
 
 @pytest.fixture()
-def api_(config, openapi):
-    return API(config, openapi)
+def api_(config):
+    return API(config)
 
 
 @pytest.fixture()
-def enclosure_api(config_enclosure, openapi):
+def enclosure_api(config_enclosure):
     """ Returns an API instance with a collection with enclosure links. """
-    return API(config_enclosure, openapi)
+    return API(config_enclosure)
 
 
 @pytest.fixture()
-def rules_api(config_with_rules, openapi):
+def rules_api(config_with_rules):
     """ Returns an API instance with URL prefix and strict slashes policy.
     The API version is extracted from the current version here.
     """
-    return API(config_with_rules, openapi)
+    return API(config_with_rules)
 
 
 @pytest.fixture()
-def api_hidden_resources(config_hidden_resources, openapi):
-    return API(config_hidden_resources, openapi)
+def api_hidden_resources(config_hidden_resources):
+    return API(config_hidden_resources)
 
 
 def test_apirequest(api_):
@@ -378,7 +376,7 @@ def test_api(config, api_, openapi):
     assert isinstance(api_.config, dict)
 
     req = mock_request(HTTP_ACCEPT='application/json')
-    rsp_headers, code, response = api_.openapi_(req)
+    rsp_headers, code, response = api_.openapi(req, openapi)
     assert rsp_headers['Content-Type'] == 'application/vnd.oai.openapi+json;version=3.0'  # noqa
     # No language requested: should be set to default from YAML
     assert rsp_headers['Content-Language'] == 'en-US'
@@ -387,7 +385,7 @@ def test_api(config, api_, openapi):
 
     a = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
     req = mock_request(HTTP_ACCEPT=a)
-    rsp_headers, code, response = api_.openapi_(req)
+    rsp_headers, code, response = api_.openapi(req, openapi)
     assert rsp_headers['Content-Type'] == FORMAT_TYPES[F_HTML] == \
            FORMAT_TYPES[F_HTML]
 
@@ -395,14 +393,14 @@ def test_api(config, api_, openapi):
 
     a = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
     req = mock_request({'ui': 'redoc'}, HTTP_ACCEPT=a)
-    rsp_headers, code, response = api_.openapi_(req)
+    rsp_headers, code, response = api_.openapi(req, openapi)
     assert rsp_headers['Content-Type'] == FORMAT_TYPES[F_HTML] == \
            FORMAT_TYPES[F_HTML]
 
     assert 'ReDoc' in response
 
     req = mock_request({'f': 'foo'})
-    rsp_headers, code, response = api_.openapi_(req)
+    rsp_headers, code, response = api_.openapi(req, openapi)
     assert rsp_headers['Content-Language'] == 'en-US'
     assert code == HTTPStatus.BAD_REQUEST
 
@@ -447,7 +445,7 @@ def test_gzip(config, api_):
     config['server']['gzip'] = True
     enc_16 = 'utf-16'
     config['server']['encoding'] = enc_16
-    api_ = API(config, openapi)
+    api_ = API(config)
 
     # Responses from server with gzip compression
     rsp_json_headers, _, rsp_gzip_json = api_.landing_page(req_gzip_json)
@@ -531,7 +529,7 @@ def test_gzip_csv(config, api_):
 
     # Use utf-16 encoding
     config['server']['encoding'] = 'utf-16'
-    api_ = API(config, openapi)
+    api_ = API(config)
 
     req_csv = mock_request({'f': 'csv'}, HTTP_ACCEPT_ENCODING=F_GZIP)
     rsp_csv_headers, _, rsp_csv_gzip = api_.get_collection_items(req_csv, 'obs') # noqa
@@ -559,7 +557,7 @@ def test_root(config, api_):
                for link in root['links'])
     assert any(link['href'].endswith('f=html') and link['rel'] == 'alternate'
                for link in root['links'])
-    assert len(root['links']) == 11
+    assert len(root['links']) == 9
     assert 'title' in root
     assert root['title'] == 'pygeoapi default instance'
     assert 'description' in root
@@ -609,7 +607,7 @@ def test_conformance(config, api_):
 
     assert isinstance(root, dict)
     assert 'conformsTo' in root
-    assert len(root['conformsTo']) == 34
+    assert len(root['conformsTo']) == 30
     assert 'http://www.opengis.net/spec/ogcapi-features-2/1.0/conf/crs' \
            in root['conformsTo']
 
@@ -619,57 +617,6 @@ def test_conformance(config, api_):
 
     req = mock_request({'f': 'html'})
     rsp_headers, code, response = api_.conformance(req)
-    assert rsp_headers['Content-Type'] == FORMAT_TYPES[F_HTML]
-    # No language requested: should be set to default from YAML
-    assert rsp_headers['Content-Language'] == 'en-US'
-
-
-def test_tilematrixsets(config, api_):
-    req = mock_request()
-    rsp_headers, code, response = api_.tilematrixsets(req)
-    root = json.loads(response)
-
-    assert isinstance(root, dict)
-    assert 'tileMatrixSets' in root
-    assert len(root['tileMatrixSets']) == 2
-    assert 'http://www.opengis.net/def/tilematrixset/OGC/1.0/WorldCRS84Quad' \
-           in root['tileMatrixSets'][0]['uri']
-    assert 'http://www.opengis.net/def/tilematrixset/OGC/1.0/WebMercatorQuad' \
-           in root['tileMatrixSets'][1]['uri']
-
-    req = mock_request({'f': 'foo'})
-    rsp_headers, code, response = api_.tilematrixsets(req)
-    assert code == HTTPStatus.BAD_REQUEST
-
-    req = mock_request({'f': 'html'})
-    rsp_headers, code, response = api_.tilematrixsets(req)
-    assert rsp_headers['Content-Type'] == FORMAT_TYPES[F_HTML]
-    # No language requested: should be set to default from YAML
-    assert rsp_headers['Content-Language'] == 'en-US'
-
-
-def test_tilematrixset(config, api_):
-    req = mock_request()
-
-    enums = [e.value for e in TileMatrixSetEnum]
-    enum = None
-
-    for e in enums:
-        enum = e.tileMatrixSet
-        rsp_headers, code, response = api_.tilematrixset(req, enum)
-        root = json.loads(response)
-
-        assert isinstance(root, dict)
-        assert 'id' in root
-        assert root['id'] == enum
-        assert 'tileMatrices' in root
-        assert len(root['tileMatrices']) == 30
-
-    rsp_headers, code, response = api_.tilematrixset(req, 'foo')
-    assert code == HTTPStatus.BAD_REQUEST
-
-    req = mock_request({'f': 'html'})
-    rsp_headers, code, response = api_.tilematrixset(req, enum)
     assert rsp_headers['Content-Type'] == FORMAT_TYPES[F_HTML]
     # No language requested: should be set to default from YAML
     assert rsp_headers['Content-Language'] == 'en-US'
@@ -1236,7 +1183,7 @@ def test_manage_collection_item_editable_options_req(config):
     """Test OPTIONS request on a editable items endpoint"""
     config = copy.deepcopy(config)
     config['resources']['obs']['providers'][0]['editable'] = True
-    api_ = API(config, openapi)
+    api_ = API(config)
 
     req = mock_request()
     rsp_headers, code, _ = api_.manage_collection_item(req, 'options', 'obs')
@@ -1433,7 +1380,7 @@ def test_get_coverage_domainset(config, api_):
     rsp_headers, code, response = api_.get_collection_coverage_domainset(
         req, 'obs')
 
-    assert code == HTTPStatus.BAD_REQUEST
+    assert code == HTTPStatus.INTERNAL_SERVER_ERROR
 
     rsp_headers, code, response = api_.get_collection_coverage_domainset(
         req, 'gdps-temperature')
@@ -1452,7 +1399,7 @@ def test_get_collection_coverage_rangetype(config, api_):
     rsp_headers, code, response = api_.get_collection_coverage_rangetype(
         req, 'obs')
 
-    assert code == HTTPStatus.BAD_REQUEST
+    assert code == HTTPStatus.INTERNAL_SERVER_ERROR
 
     rsp_headers, code, response = api_.get_collection_coverage_rangetype(
         req, 'gdps-temperature')
@@ -1502,11 +1449,8 @@ def test_get_collection_coverage(config, api_):
     rsp_headers, code, response = api_.get_collection_coverage(
         req, 'gdps-temperature')
 
-    # NOTE: This test used to assert the code to be 200 OK,
-    #       but it requested HTML, which is not available,
-    #       so it should be 400 Bad Request
-    assert code == HTTPStatus.BAD_REQUEST
-    assert rsp_headers['Content-Type'] == 'text/html'
+    assert code == HTTPStatus.OK
+    assert rsp_headers['Content-Type'] == 'application/prs.coverage+json'
 
     req = mock_request({'subset': 'Lat(5:10),Long(5:10)'})
     rsp_headers, code, response = api_.get_collection_coverage(
@@ -1542,13 +1486,6 @@ def test_get_collection_coverage(config, api_):
 
     assert code == HTTPStatus.OK
     assert isinstance(response, bytes)
-
-    req = mock_request(HTTP_ACCEPT='application/x-netcdf')
-    rsp_headers, code, response = api_.get_collection_coverage(
-        req, 'cmip5')
-
-    assert code == HTTPStatus.OK
-    assert rsp_headers['Content-Type'] == 'application/x-netcdf'
 
     # req = mock_request({
     #     'subset': 'time("2006-07-01T06:00:00":"2007-07-01T06:00:00")'
@@ -1695,16 +1632,6 @@ def test_describe_processes(config, api_):
     assert code == HTTPStatus.NOT_FOUND
     assert data['code'] == 'NoSuchProcess'
     assert rsp_headers['Content-Type'] == FORMAT_TYPES[F_JSON]
-
-    # Test describe doesn't crash if example is missing
-    req = mock_request()
-    processor = api_.manager.get_processor("hello-world")
-    example = processor.metadata.pop("example")
-    rsp_headers, code, response = api_.describe_processes(req)
-    processor.metadata['example'] = example
-    data = json.loads(response)
-    assert code == HTTPStatus.OK
-    assert len(data['processes']) == 2
 
 
 def test_execute_process(config, api_):
@@ -1880,10 +1807,21 @@ def test_execute_process(config, api_):
         assert code == HTTPStatus.OK
 
 
-def _execute_a_job(api_):
+def test_delete_job(api_):
+    rsp_headers, code, response = api_.delete_job(
+        mock_request(), 'does-not-exist')
+
+    assert code == HTTPStatus.NOT_FOUND
+
     req_body_sync = {
         'inputs': {
-            'name': 'Sync Test'
+            'name': 'Sync Test Deletion'
+        }
+    }
+
+    req_body_async = {
+        'inputs': {
+            'name': 'Async Test Deletion'
         }
     }
 
@@ -1894,23 +1832,9 @@ def _execute_a_job(api_):
     data = json.loads(response)
     assert code == HTTPStatus.OK
     assert 'Location' in rsp_headers
-    assert data['value'] == 'Hello Sync Test!'
+    assert data['value'] == 'Hello Sync Test Deletion!'
 
     job_id = rsp_headers['Location'].split('/')[-1]
-    return job_id
-
-
-def test_delete_job(api_):
-    rsp_headers, code, response = api_.delete_job(
-        mock_request(), 'does-not-exist')
-
-    assert code == HTTPStatus.NOT_FOUND
-    req_body_async = {
-        'inputs': {
-            'name': 'Async Test Deletion'
-        }
-    }
-    job_id = _execute_a_job(api_)
     rsp_headers, code, response = api_.delete_job(mock_request(), job_id)
 
     assert code == HTTPStatus.OK
@@ -1934,32 +1858,12 @@ def test_delete_job(api_):
     assert code == HTTPStatus.NOT_FOUND
 
 
-def test_get_job_result(api_):
-    rsp_headers, code, response = api_.get_job_result(mock_request(),
-                                                      'not-exist')
-    assert code == HTTPStatus.NOT_FOUND
-
-    job_id = _execute_a_job(api_)
-    rsp_headers, code, response = api_.get_job_result(mock_request(), job_id)
-    # default response is html
-    assert code == HTTPStatus.OK
-    assert rsp_headers['Content-Type'] == 'text/html'
-    assert 'Hello Sync Test!' in response
-
-    rsp_headers, code, response = api_.get_job_result(
-         mock_request({'f': 'json'}), job_id,
-     )
-    assert code == HTTPStatus.OK
-    assert rsp_headers['Content-Type'] == 'application/json'
-    assert json.loads(response)['value'] == "Hello Sync Test!"
-
-
 def test_get_collection_edr_query(config, api_):
     # edr resource
     req = mock_request()
     rsp_headers, code, response = api_.describe_collections(req, 'icoads-sst')
     collection = json.loads(response)
-    parameter_names = list(collection['parameter_names'].keys())
+    parameter_names = list(collection['parameter-names'].keys())
     parameter_names.sort()
     assert len(parameter_names) == 4
     assert parameter_names == ['AIRT', 'SST', 'UWND', 'VWND']
@@ -1981,9 +1885,9 @@ def test_get_collection_edr_query(config, api_):
         req, 'icoads-sst', None, 'position')
     assert code == HTTPStatus.BAD_REQUEST
 
-    # bad parameter_names parameter
+    # bad parameter-name parameter
     req = mock_request({
-        'coords': 'POINT(11 11)', 'parameter_names': 'bad'
+        'coords': 'POINT(11 11)', 'parameter-name': 'bad'
     })
     rsp_headers, code, response = api_.get_collection_edr_query(
         req, 'icoads-sst', None, 'position')
@@ -2014,7 +1918,7 @@ def test_get_collection_edr_query(config, api_):
 
     # single parameter
     req = mock_request({
-        'coords': 'POINT(11 11)', 'parameter_names': 'SST'
+        'coords': 'POINT(11 11)', 'parameter-name': 'SST'
     })
     rsp_headers, code, response = api_.get_collection_edr_query(
         req, 'icoads-sst', None, 'position')
@@ -2098,6 +2002,15 @@ def test_get_collection_edr_query(config, api_):
         req, 'icoads-sst', None, 'position')
     assert code == HTTPStatus.NO_CONTENT
 
+    # S3 EDR
+    req = mock_request({
+        'coords': 'POINT(-100 40)',
+        'parameter-name': 'GWETROOT'
+    })
+    rsp_headers, code, response = api_.get_collection_edr_query(
+        req, 'nasa-power', None, 'position')
+    assert code == HTTPStatus.OK
+
     # position no coords
     req = mock_request({
         'datetime': '2000-01-17'
@@ -2127,17 +2040,6 @@ def test_get_collection_edr_query(config, api_):
     rsp_headers, code, response = api_.get_collection_edr_query(
         req, 'icoads-sst', None, 'cube')
     assert code == HTTPStatus.BAD_REQUEST
-
-    # cube decreasing latitude coords and S3
-    req = mock_request({
-        'bbox': '-100,40,-99,45',
-        'parameter_names': 'tmn',
-        'datetime': '1994-01-01/1994-12-31',
-    })
-
-    rsp_headers, code, response = api_.get_collection_edr_query(
-        req, 'usgs-prism', None, 'cube')
-    assert code == HTTPStatus.OK
 
 
 def test_validate_bbox():

@@ -30,8 +30,6 @@
 import logging
 from typing import Any, Tuple
 
-from pygeoapi.error import GenericError
-
 LOGGER = logging.getLogger(__name__)
 
 
@@ -66,14 +64,14 @@ class BaseProcessor:
         return f'<BaseProcessor> {self.name}'
 
 
-class ProcessorGenericError(GenericError):
+class ProcessorGenericError(Exception):
     """processor generic error"""
     pass
 
 
 class ProcessorExecuteError(ProcessorGenericError):
     """query / backend error"""
-    default_msg = "generic error (check logs)"
+    pass
 
 
 class JobError(Exception):
