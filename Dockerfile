@@ -9,6 +9,7 @@
 # Copyright (c) 2019 Just van den Broecke
 # Copyright (c) 2020 Francesco Bartoli
 # Copyright (c) 2021 Angelos Tzotsos
+# Copyright (c) 2023 Bernhard Mallinger
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -33,7 +34,7 @@
 #
 # =================================================================
 
-FROM ubuntu:jammy 
+FROM ubuntu:jammy-20231211.1
 
 LABEL maintainer="Just van den Broecke <justb4@gmail.com>"
 
@@ -64,6 +65,7 @@ ARG ADD_DEB_PACKAGES="\
     python3-elasticsearch \
     python3-fiona \
     python3-gdal \
+    python3-jsonpatch \
     python3-netcdf4 \
     python3-pandas \
     python3-psycopg2 \
@@ -99,32 +101,11 @@ ENV TZ=${TZ} \
     python3-yaml \
     ${ADD_DEB_PACKAGES}"
 
-
-WORKDIR /opt/oracle
-
-# Install necessary packages and download Oracle Instant Client
-RUN \
-    apt-get update && apt-get install -y libaio1 wget unzip \
-    && wget https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip \
-    && unzip instantclient-basiclite-linuxx64.zip \
-    && rm -f instantclient-basiclite-linuxx64.zip \
-    && cd ./instantclient_21_13 \
-    && rm -f *jdbc* *occi* *mysql* *README *jar uidrvci genezi adrci \
-    && echo /opt/oracle/instantclient_21_13 > /etc/ld.so.conf.d/oracle-instantclient.conf \
-    && ldconfig
-    #install oracledb python package
-    #&& apt update && apt install -y --no-install-recommends wget zip unzip alien \
-    #&& wget https://download.oracle.com/otn_software/linux/instantclient/1918000/oracle-instantclient19.18-basic-19.18.0.0.0-2.x86_64.rpm \
-    #&& alien -i oracle-instantclient19.18-basic-19.18.0.0.0-2.x86_64.rpm/*
-
-
 WORKDIR /pygeoapi
-ADD . /pygeoapi
 
 # Install operating system dependencies
 RUN \
     apt-get update -y \
-    && apt-get upgrade -y \
     && apt-get --no-install-recommends install -y ${DEB_PACKAGES} ${DEB_BUILD_DEPS}  \
     && localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8 \
     && echo "For ${TZ} date=$(date)" && echo "Locale=$(locale)"  \
@@ -138,21 +119,29 @@ RUN \
     && unzip ./SCHEMAS_OPENGIS_NET.zip "ogcapi/*" -d /schemas.opengis.net \
     && rm -f ./SCHEMAS_OPENGIS_NET.zip \
 
-    # Install remaining pygeoapi deps
-    && pip3 install -r requirements-docker.txt \
-
-    # Install pygeoapi
-    && pip3 install -e . \
-
-    # Set default config and entrypoint for Docker Image
-    && cp /pygeoapi/docker/default.config.yml /pygeoapi/local.config.yml \
-    && cp /pygeoapi/docker/entrypoint.sh /entrypoint.sh  \
-
     # Cleanup TODO: remove unused Locales and TZs
+    # NOTE: this tries to remove gcc, but the actual package gcc-11 can't be
+    #       removed because python3-scipy depends on python3-pythran which
+    #       depends on g++
     && apt-get remove --purge -y gcc ${DEB_BUILD_DEPS} \
     && apt-get clean \
     && apt autoremove -y  \
-    && rm -rf /var/lib/apt/lists
+    && rm -rf /var/lib/apt/lists/*
 
+ADD requirements-docker.txt requirements-admin.txt /pygeoapi/
+# Install remaining pygeoapi deps
+RUN python3 -m pip install --no-cache-dir -r requirements-docker.txt \
+    && python3 -m pip install --no-cache-dir -r requirements-admin.txt
+
+
+ADD . /pygeoapi
+
+ # Install pygeoapi
+RUN python3 -m pip install --no-cache-dir -e . 
+
+RUN \ 
+    # Set default config and entrypoint for Docker Image
+    cp /pygeoapi/docker/default.config.yml /pygeoapi/local.config.yml \
+    && cp /pygeoapi/docker/entrypoint.sh /entrypoint.sh 
 
 ENTRYPOINT ["/entrypoint.sh"]
