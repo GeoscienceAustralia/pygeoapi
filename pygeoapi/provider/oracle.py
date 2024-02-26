@@ -33,6 +33,7 @@ import logging
 from typing import Optional
 
 import oracledb
+oracledb.init_oracle_client(lib_dir="/opt/oracle/instantclient_21_13")
 
 from pygeoapi.provider.base import (
     BaseProvider,
