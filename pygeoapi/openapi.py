@@ -1388,6 +1388,8 @@ def generate(ctx, config_file, output_file, format_='yaml'):
     if output_file is None:
         click.echo(content)
     else:
+        ###DEBUG
+        click.echo(f'This is line 1391 in openapi.py')
         click.echo(f'Generating {output_file.name}')
         output_file.write(content)
         click.echo('Done')
