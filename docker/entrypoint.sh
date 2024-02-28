@@ -58,12 +58,8 @@ function error() {
 
 # Workdir
 cd ${PYGEOAPI_HOME}
-###DEBUG
-echo "this is line 62 in entrypoint.sh"
 echo "Trying to generate openapi.yml"
 pygeoapi openapi generate ${PYGEOAPI_CONFIG} --output-file ${PYGEOAPI_OPENAPI}
-###DEBUG
-echo "this is line 66 in entrypoint.sh"
 
 [[ $? -ne 0 ]] && error "openapi.yml could not be generated ERROR"
 
