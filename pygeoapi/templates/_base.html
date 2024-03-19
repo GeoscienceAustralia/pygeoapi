@@ -41,7 +41,7 @@
         <a href="{{ config['server']['url'] }}"
           class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-dark text-decoration-none">
           <img src="{{ config['server']['url'] }}/static/img/ga_logo_inline.png"
-            title="{{ config['metadata']['identification']['title'] }}" style="height:40px;vertical-align: middle;" /></a>
+            title="{{ config['metadata']['identification']['title'] }}" style="height:60px;vertical-align: middle;" /></a>
         <ul class="nav nav-pills">
 	  <!--
 	  <li class="nav-item">
@@ -83,7 +83,7 @@
           <a href="?f=jsonld">{% trans %}jsonld{% endtrans %}</a>
           {% endif %}
 
-        </span>
+	</span>
         </div>
       </div>
     </div>
@@ -99,9 +99,24 @@
       </div>
     </div>
     </main>
-    <footer class="sticky-bottom bg-light d-flex flex-wrap py-3 px-3 border-top">{% trans %}Powered by {% endtrans %} <a title="pygeoapi" href="https://pygeoapi.io"><!--<img
-        src="{{ config['server']['url'] }}/static/img/ga_logo.png" class="mx-1" title="pygeoapi logo"
-	style="height:24px;vertical-align: middle;" />--></a> {{ version }}</footer>
+    <footer>
+    <div id="footer-bottom">
+      <div id="footer-bottom-links">
+        <a href="https://www.ga.gov.au/copyright">Copyright</a>
+        <a href="https://www.ga.gov.au/privacy">Privacy</a>
+        <a href="https://www.ga.gov.au/accessibility">Accessibility</a>
+        <a href="https://www.ga.gov.au/sitemap">Sitemap</a>
+        <a href="https://www.ga.gov.au/ips">Information Publication Scheme</a>
+        <a href="https://www.ga.gov.au/ips/foi">Freedom of Information</a>
+        <a href="https://www.ga.gov.au/contact-us">Contact Us</a>
+      </div>
+      <div>
+        We acknowledge the Traditional Owners of the country where we work throughout Australia. We acknowledge
+        Aboriginal and Torres Strait Islander people’s continuing connection to land, sea and community. We pay our
+        respects to their elders past and present and emerging.
+      </div>
+    </div>
+  </footer>
     {% block extrafoot %}
     {% endblock %}
     <script>
