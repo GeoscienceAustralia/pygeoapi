@@ -40,17 +40,14 @@
       <header class="d-flex flex-wrap justify-content-center py-3">
         <a href="{{ config['server']['url'] }}"
           class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-dark text-decoration-none">
-          <img src="{{ config['server']['url'] }}/static/img/logo.png"
-            title="{{ config['metadata']['identification']['title'] }}" style="height:40px;vertical-align: middle;" /></a>
+          <img src="{{ config['server']['url'] }}/static/img/ga_logo_inline.png"
+            title="{{ config['metadata']['identification']['title'] }}" style="height:60px;vertical-align: middle;" /></a>
         <ul class="nav nav-pills">
-          <li class="nav-item">
-            <a href="mailto:{{ config['metadata']['contact']['email'] }}" class="nav-link" aria-current="page">Contact</a>
+	  <!--
+	  <li class="nav-item">
+	  	<a href="mailto:{{ config['metadata']['contact']['email'] }}" class="nav-link" aria-current="page">Contact</a>
           </li>
-          {% if config['server']['admin'] %}
-          <li class="nav-item">
-            <a href="{{ config['server']['url'] }}/admin/config" class="nav-link" aria-current="page">{% trans %}Admin{% endtrans %}</a>
-          </li>
-         {% endif %}
+		  -->
           <!--
             Add additional menu items here
             <a href="https://pygeoapi.io" class="nav-link">About</a>
@@ -86,7 +83,7 @@
           <a href="?f=jsonld">{% trans %}jsonld{% endtrans %}</a>
           {% endif %}
 
-        </span>
+	</span>
         </div>
       </div>
     </div>
@@ -102,9 +99,21 @@
       </div>
     </div>
     </main>
-    <footer class="sticky-bottom bg-light d-flex flex-wrap py-3 px-3 border-top">{% trans %}Powered by {% endtrans %} <a title="pygeoapi" href="https://pygeoapi.io"><img
-        src="{{ config['server']['url'] }}/static/img/pygeoapi.png" class="mx-1" title="pygeoapi logo"
-        style="height:24px;vertical-align: middle;" /></a> {{ version }}</footer>
+    <footer  style="background:linear-gradient(#082e41, #00718b);color: white; margin-top: auto;display: flex;flex-direction: column;width: 100%;vertical-align: middle;">
+    <div id="footer-bottom" style="display: flex;flex-direction: column;gap: 16px;width: 100%;max-width: 990px;margin: 0 auto 20px auto;padding: 16px 12px;" >
+      <div id="footer-bottom-links" style="display: flex; flex-direction: row; gap: 12px;" >
+        <a href="https://www.ga.gov.au/copyright">Copyright</a>
+        <a href="https://www.ga.gov.au/privacy">Privacy</a>
+        <a href="https://www.ga.gov.au/accessibility">Accessibility</a>
+        <a href="https://www.ga.gov.au/sitemap">Sitemap</a>
+        <a href="https://www.ga.gov.au/ips">Information Publication Scheme</a>
+        <a href="https://www.ga.gov.au/ips/foi">Freedom of Information</a>
+      </div>
+      <div>
+        Geoscience Australia acknowledges the traditional owners of the country throughout Australia and their continuing connection to land, sea and community. We pay our respect to them and their cultures and to the elders past and present.
+      </div>
+    </div>
+  </footer>
     {% block extrafoot %}
     {% endblock %}
     <script>
