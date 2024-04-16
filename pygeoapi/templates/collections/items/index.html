@@ -16,6 +16,12 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css"/>
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css"/>
     <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster-src.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.js" integrity="sha256-eKhayi8LEQwp4NKxN+CfCh+3qOVUtJn3QNZ0TciWLP4=" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://cdn.datatables.net/2.0.3/css/dataTables.dataTables.css" />
+    <script type="text/javascript" src="https://cdn.datatables.net/1.10.24/js/jquery.dataTables.min.js"></script>
+    <script type="text/javascript" src="https://cdn.datatables.net/fixedcolumns/3.3.2/js/dataTables.fixedColumns.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.10.24/css/jquery.dataTables.min.css">
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/fixedcolumns/3.3.2/css/fixedColumns.dataTables.min.css"> 
 {% endblock %}
 
 {% block body %}
@@ -76,7 +82,7 @@
 
       <div class="col-sm-12 col-md-6" style="overflow-x: scroll;">
         {% set props = [] %}
-        <table class="table table-striped table-bordered">
+        <table id="searchTable" class="stripe cell-border order-column" style="width:100%">
           <thead>
             <tr>
               {% if data.get('uri_field') %}
@@ -140,6 +146,32 @@
     </div>
     {% endif %}
     </section>
+    <script>
+    	$(document).ready(function() {
+      	// Setup - add a text input to each footer cell
+      	$('#searchTable thead th').each(function(i) {
+        	var title = $('#searchTable thead th').eq($(this).index()).text();
+        	$(this).html('<input type="text" placeholder="Search ' + title + '" data-index="' + i + '" />');
+      	});
+
+      	// DataTable
+      	var table = $('#searchTable').DataTable({
+        	responsive: true,
+        	paging: true,
+        	sorting: false,
+        	searching: true,
+	      //dom: 'rtip',      //this can be used to remove the search bar at the top and other configuration settings
+      	});
+
+      	// Filter event handler
+      	$(table.table().container()).on('keyup', 'thead input', function() {
+        	table
+          	.column($(this).data('index'))
+          	.search(this.value)
+          	.draw();
+      	});
+      });
+    </script>
 {% endblock %}
 
 {% block extrafoot %}
