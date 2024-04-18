@@ -82,7 +82,7 @@
 
       <div class="col-sm-12 col-md-6" style="overflow-x: scroll;">
         {% set props = [] %}
-        <table id="searchTable" class="stripe cell-border order-column" style="width:100%">
+        <table id="search-table" class="stripe cell-border order-column" style="width:100%">
           <thead>
             <tr>
               {% if data.get('uri_field') %}
@@ -150,12 +150,12 @@
     	$(document).ready(function() {
       	// Setup - add a text input to each footer cell
       	$('#searchTable thead th').each(function(i) {
-        	var title = $('#searchTable thead th').eq($(this).index()).text();
+        	var title = $('#search-table thead th').eq($(this).index()).text();
         	$(this).html('<input type="text" placeholder="Search ' + title + '" data-index="' + i + '" />');
       	});
 
       	// DataTable
-      	var table = $('#searchTable').DataTable({
+      	var table = $('#search-table').DataTable({
         	responsive: true,
         	paging: true,
         	sorting: false,
