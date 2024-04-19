@@ -49,14 +49,6 @@ from pygeoapi.util import get_crs_from_uri
 
 LOGGER = logging.getLogger(__name__)
 
-#saya-debugging
-MESSAGE_LEVEL = 10
-LOGFILE_NAME = 'saya.log'
-def sayamsg(m,s=10):
-        if s >= MESSAGE_LEVEL:
-            with open(LOGFILE_NAME, 'a') as f:
-                f.write('{}\n'.format(m))
-
 class DatabaseConnection:
     """Database connection class to be used as 'with' statement.
     The class returns a connection object.
@@ -223,19 +215,11 @@ class DatabaseConnection:
                 ]
 
             # Concatenate column names with ', '
-            #saya-debugging
-            # self.columns = ", ".join([item[0].lower() for item in column_list])
-            self.columns = ", ".join([item[0] for item in column_list])
-            sayamsg("SAYA L226: {}".format(self.columns))
+            self.columns = ", ".join([item[0].lower() for item in column_list])
 
             # Populate dictionary for columns with column type
-            #saya-debugging
-            # for k, v in dict(column_list).items():
-            #     self.fields[k.lower()] = {"type": v}
             for k, v in dict(column_list).items():
-                self.fields[k] = {"type": v}
-            #saya-debugging
-            sayamsg("SAYA L237: {}".format(self.fields))
+                self.fields[k.lower()] = {"type": v}
 
         return self
 
