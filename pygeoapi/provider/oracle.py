@@ -221,19 +221,21 @@ class DatabaseConnection:
                     if col[0].lower()
                     in [item.lower() for item in self.properties]
                 ]
-                #saya-debugging
-                sayamsg("SAYA L224: {}".format(column_list))
 
             # Concatenate column names with ', '
-            self.columns = ", ".join([item[0].lower() for item in column_list])
             #saya-debugging
-            sayamsg("SAYA L229: {}".format(self.columns))
+            # self.columns = ", ".join([item[0].lower() for item in column_list])
+            self.columns = ", ".join([item[0] for item in column_list])
+            sayamsg("SAYA L226: {}".format(self.columns))
 
             # Populate dictionary for columns with column type
-            for k, v in dict(column_list).items():
-                self.fields[k.lower()] = {"type": v}
             #saya-debugging
-            sayamsg("SAYA L235: {}".format(self.fields))
+            # for k, v in dict(column_list).items():
+            #     self.fields[k.lower()] = {"type": v}
+            for k, v in dict(column_list).items():
+                self.fields[k] = {"type": v}
+            #saya-debugging
+            sayamsg("SAYA L237: {}".format(self.fields))
 
         return self
 
