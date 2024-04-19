@@ -49,6 +49,13 @@ from pygeoapi.util import get_crs_from_uri
 
 LOGGER = logging.getLogger(__name__)
 
+#saya-debugging
+MESSAGE_LEVEL = 10
+LOGFILE_NAME = 'saya.log'
+def sayamsg(m,s=10):
+        if s >= MESSAGE_LEVEL:
+            with open(LOGFILE_NAME, 'a') as f:
+                f.write('{}\n'.format(m))
 
 class DatabaseConnection:
     """Database connection class to be used as 'with' statement.
@@ -202,6 +209,9 @@ class DatabaseConnection:
 
         LOGGER.debug("Schema: " + schema)
         LOGGER.debug("Table: " + table)
+
+        #saya-debugging
+        sayamsg("SAYA L207: {}{}".format(schema, table))
 
         if self.context == "query":
             column_list = self._get_table_columns(schema, table)
