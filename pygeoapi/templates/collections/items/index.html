@@ -149,7 +149,7 @@
     <script>
     	$(document).ready(function() {
       	// Setup - add a text input to each footer cell
-      	$('#searchTable thead th').each(function(i) {
+      	$('#searchtable thead th').each(function(i) {
         	var title = $('#searchtable thead th').eq($(this).index()).text();
         	$(this).html('<input type="text" placeholder="Search ' + title + '" data-index="' + i + '" />');
       	});
