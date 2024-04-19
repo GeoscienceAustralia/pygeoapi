@@ -49,6 +49,7 @@ from pygeoapi.util import get_crs_from_uri
 
 LOGGER = logging.getLogger(__name__)
 
+
 class DatabaseConnection:
     """Database connection class to be used as 'with' statement.
     The class returns a connection object.
