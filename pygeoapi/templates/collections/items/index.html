@@ -87,18 +87,30 @@
             <tr>
               {% if data.get('uri_field') %}
                 {% set uri_field = data.uri_field %}
-                <th>{{ uri_field }}</th>
+                <th>                  
+                  <label> {{uri_field}}</label>
+                  <div> {{uri_field}} </div>
+                </th>
               {% elif data.get('title_field') %}
                 {% set title_field = data.title_field %}
-                <th>{{ title_field }}</th>
+                <th>
+                    <label> {{ title_field }} </label>
+                    <div>  {{ title_field }} </div>
+                </th>
               {% else %}
-                <th>id</th>
+                <th>
+                    <label> id </label>
+                    <div> id </div>
+                </th>
               {% endif %}
 
               {% for k in data['features'][0]['properties'].keys() %}
                 {% if k not in [data.id_field, data.title_field, data.uri_field, 'extent'] %}
                   {% set props = props.append(k) %}
-                  <th>{{ k }}</th>
+                  <th>
+                      <label> {{ k }} </label>
+                      <div> {{ k }} </div>
+                  </th>
                 {% endif %}
               {% endfor %}
             </tr>
@@ -147,11 +159,11 @@
     {% endif %}
     </section>
     <script>
-    	$(document).ready(function() {
-      	// Setup - add a text input to each footer cell
-      	$('#searchtable thead th').each(function(i) {
-        	var title = $('#searchtable thead th').eq($(this).index()).text();
-        	$(this).html('<input type="text" placeholder="Search ' + title + '" data-index="' + i + '" />');
+        $(document).ready(function() {
+      	// Setup - add a text input to each header cell
+      	$('#searchtable thead th div').each(function(i) {
+        	var title = $('#searchtable thead th div').eq($(this).index()).text();
+        	$(this).html('<input type="text" placeholder="Search ' + '" data-index="' + i + '" />');
       	});
 
       	// DataTable
