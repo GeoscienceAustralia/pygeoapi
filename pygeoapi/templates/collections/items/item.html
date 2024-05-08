@@ -1,7 +1,5 @@
 {% extends "_base.html" %}
-<!-- GA customisation change the line below
-{% set ptitle = data['properties'][data['title_field']] or 'Item '.format(data['id']) %} -->
-{% set ptitle = data['properties'][data['title_field']] %}
+{% set ptitle = data['properties'][data['title_field']] or 'Item '.format(data['id']) %}
 {% block desc %}{{ data.get('properties',{}).get('description', {}) | string | truncate(250) }}{% endblock %}
 {% block tags %}{{ data['properties'].get('themes', [{}])[0].get('concepts', []) | join(',') }}{% endblock %}
 {# Optionally renders an img element, otherwise standard value or link rendering #}
@@ -33,7 +31,7 @@
   {% endif %}
 {% endfor %}
 / <a href="../items">{% trans %}Items{% endtrans %}</a>
-/ <a href="./{{ data['id'] }}">{{ ptitle | truncate( 25 ) }}</a>
+/ <a href="./{{ data['title_field'] }}">{{ ptitle | truncate( 25 ) }}</a>
 {% endblock %}
 {% block extrahead %}
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.3.1/dist/leaflet.css"/>
