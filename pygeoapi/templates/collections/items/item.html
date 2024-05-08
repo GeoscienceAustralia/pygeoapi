@@ -31,7 +31,7 @@
   {% endif %}
 {% endfor %}
 / <a href="../items">{% trans %}Items{% endtrans %}</a>
-/ <a href="./{{ data['title_field'] }}">{{ ptitle | truncate( 25 ) }}</a>
+/ <a href="./{{ data['id'] }}">{{ ptitle | truncate( 25 ) }}</a>
 {% endblock %}
 {% block extrahead %}
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.3.1/dist/leaflet.css"/>
