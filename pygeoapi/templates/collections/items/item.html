@@ -1,7 +1,7 @@
 {% extends "_base.html" %}
 <!-- GA customisation change the line below
 {% set ptitle = data['properties'][data['title_field']] or 'Item '.format(data['id']) %} -->
-{% set ptitle = data['id_field '.format(data['id']) %}
+{% set ptitle = data['properties'][data['title_field']] %}
 {% block desc %}{{ data.get('properties',{}).get('description', {}) | string | truncate(250) }}{% endblock %}
 {% block tags %}{{ data['properties'].get('themes', [{}])[0].get('concepts', []) | join(',') }}{% endblock %}
 {# Optionally renders an img element, otherwise standard value or link rendering #}
