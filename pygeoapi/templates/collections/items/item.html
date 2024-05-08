@@ -1,5 +1,7 @@
 {% extends "_base.html" %}
-{% set ptitle = data['properties'][data['title_field']] or 'Item '.format(data['id']) %}
+<!-- GA customisation change the line below
+{% set ptitle = data['properties'][data['title_field']] or 'Item '.format(data['id']) %} -->
+{% set ptitle = data['properties'][data['title_field']] %}
 {% block desc %}{{ data.get('properties',{}).get('description', {}) | string | truncate(250) }}{% endblock %}
 {% block tags %}{{ data['properties'].get('themes', [{}])[0].get('concepts', []) | join(',') }}{% endblock %}
 {# Optionally renders an img element, otherwise standard value or link rendering #}
@@ -30,7 +32,7 @@
 /  <a href="{{ link['href'] }}">{{ link['title'] | truncate( 25 ) }}</a>
   {% endif %}
 {% endfor %}
-/ <a href="../items">{% trans %}ItemsXYZXYZ{% endtrans %}</a>
+/ <a href="../items">{% trans %}Items{% endtrans %}</a>
 / <a href="./{{ data['id'] }}">{{ ptitle | truncate( 25 ) }}</a>
 {% endblock %}
 {% block extrahead %}
