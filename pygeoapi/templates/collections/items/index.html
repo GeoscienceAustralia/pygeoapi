@@ -28,7 +28,8 @@
   <section id="items"></section>
   <section id="collection">
     <h1>{% for l in data['links'] if l.rel == 'collection' %} {{ l['title'] }} {% endfor %}</h1>
-    <p>{% trans %}Items in this collection{% endtrans %}.</p>
+    <!-- GA customisation disable trans
+    <p>{% trans %}Items in this collection{% endtrans %}.</p> -->
   </section>
   <section id="items">
     {% if data['features'] %}
