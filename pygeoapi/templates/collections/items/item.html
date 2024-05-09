@@ -31,9 +31,9 @@
   {% endif %}
 {% endfor %}
 / <a href="../items">{% trans %}Items{% endtrans %}</a>
-<!-- GA customisation data.id to display ID in Item page
-/ <a href="./{{ data['id'] }}">{{ ptitle | truncate( 25 ) }}</a> -->
-/ <a href="./{{ data.id }}">{{ ptitle | truncate( 25 ) }}</a>
+<!-- GA customisation insert below -->
+/ <a href="../*">{% trans %}Item with ID{% endtrans %}</a>
+/ <a href="./{{ data['id'] }}">{{ ptitle | truncate( 25 ) }}</a>
 {% endblock %}
 {% block extrahead %}
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.3.1/dist/leaflet.css"/>
