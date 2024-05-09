@@ -59,6 +59,7 @@
     </p>
   </section>
  {% endif %}
+ <!-- GA customisation disable Processes and Jobs
  {% if data['processes'] %}
   <section id="processes">
       <h2>{% trans %}Processes{% endtrans %}</h2>
@@ -72,7 +73,7 @@
         <a title="Browse jobs" href="{{config.server.url}}/jobs">{% trans %}Browse jobs{% endtrans %}</a>
       </p>
   </section>
- {% endif %}
+ {% endif %} -->
   <section id="openapi">
       <h2>{% trans %}API Definition{% endtrans %}</h2>
       <p>
@@ -82,6 +83,7 @@
         <a href="{{ config['server']['url'] }}/openapi?f=json">{% trans %}OpenAPI Document{% endtrans %}</a>
       </p>
   </section>
+  <!-- GA customisation disable Conformance and Tile Matrix Sets
   <section id="conformance">
       <h2>{% trans %}Conformance{% endtrans %}</h2>
       <p>
@@ -93,8 +95,9 @@
       <p>
         <a href="{{ config['server']['url'] }}/TileMatrixSets?f=html">{% trans %}View the Tile Matrix Sets available on this service{% endtrans %}</a>
       </p>
-  </section>
+  </section> -->
   </div>
+  <!-- GA customisation disable class="card"
   <div class="col-md-4 col-sm-12">
     <div class="card mb-3">
       <div class="card-header">
@@ -143,7 +146,7 @@
           {% endif %}
         </div>
       </div>
-    </div>
+    </div> -->
   </div>
 </div>
 

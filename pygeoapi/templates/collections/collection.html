@@ -86,6 +86,7 @@
             </a></li>
       {% endfor %}
       </ul>
+      <!-- GA customisation disable Reference Systems and Storage CRS
       {% if data['itemType'] == 'feature' %}
       <h3>{% trans %}Reference Systems{% endtrans %}</h3>
       <ul>
@@ -103,7 +104,7 @@
         <li>
           Epoch: <span>{{ data['storageCrsCoordinateEpoch'] or 'not specified' }}</span></a>
         </li>
-      </ul>
+      </ul> -->
      {% endif %}
 
     </section>
