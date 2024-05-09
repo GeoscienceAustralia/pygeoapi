@@ -31,7 +31,6 @@
   {% endif %}
 {% endfor %}
 / <a href="../items">{% trans %}Items{% endtrans %}</a>
-<!-- GA customisation ??? -->
 / <a href="./{{ data['id'] }}">{{ ptitle | truncate( 25 ) }}</a>
 {% endblock %}
 {% block extrahead %}
@@ -43,7 +42,8 @@
     <section id="item">
       <div class="row">
         <div class="col-sm">
-          <!-- GA customisation ??? -->
+          <!-- GA customisation ptitle to ID
+          <h1>{{ ptitle }}</h1> -->
           <h1>{{ data['id'] }}</h1>
         </div>
       </div>
