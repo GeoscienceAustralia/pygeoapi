@@ -609,147 +609,147 @@ class OracleProvider(BaseProvider):
 
             return self._response_feature_hits(hits)
 
-    with DatabaseConnection(
-        self.conn_dic, self.table, properties=self.properties
-    ) as db:
-        db.conn.outputtypehandler = self._output_type_handler
+        with DatabaseConnection(
+            self.conn_dic, self.table, properties=self.properties
+        ) as db:
+            db.conn.outputtypehandler = self._output_type_handler
 
-        cursor = db.conn.cursor()
+            cursor = db.conn.cursor()
 
-        # Create column list.
-        #   Uses columns field that was generated in the Connection class
-        #   or the configured columns from the Yaml file.
-        props = (
-            db.columns
-            if select_properties == []
-            else ", ".join([p for p in select_properties])
-        )
-
-        where_dict = self._get_where_clauses(
-            properties=properties,
-            bbox=bbox,
-            bbox_crs=self.storage_crs,
-            sdo_param=self.sdo_param,
-            sdo_operator=self.sdo_operator,
-        )
-
-        # Get correct SRID
-        if crs_transform_spec is not None:
-            source_crs = pyproj.CRS.from_wkt(
-                crs_transform_spec.source_crs_wkt
-            )
-            source_srid = self._get_srid_from_crs(source_crs)
-
-            target_crs = pyproj.CRS.from_wkt(
-                crs_transform_spec.target_crs_wkt
-            )
-            target_srid = self._get_srid_from_crs(target_crs)
-        else:
-            source_srid = self._get_srid_from_crs(self.storage_crs)
-            target_srid = source_srid
-
-            # TODO See Issue #1393
-            # target_srid = self._get_srid_from_crs(self.default_crs)
-            # If issue is not accepted, this block can be merged with
-            # the following block.
-
-        LOGGER.debug(f"source_srid: {source_srid}")
-        LOGGER.debug(f"target_srid: {target_srid}")
-
-        # Build geometry column call
-        #   When a different output CRS is definded, the geometry
-        #   geometry column would be transformed.
-        if skip_geometry:
-            geom = ""
-
-        elif source_srid != target_srid:
-            geom = f""", sdo_cs.transform(t1.{self.geom},
-                                        :target_srid).get_geojson()
-                        AS geometry """
-
-            where_dict["properties"].update(
-                {"target_srid": int(target_srid)}
+            # Create column list.
+            #   Uses columns field that was generated in the Connection class
+            #   or the configured columns from the Yaml file.
+            props = (
+                db.columns
+                if select_properties == []
+                else ", ".join([p for p in select_properties])
             )
 
-        else:
-            geom = f", t1.{self.geom}.get_geojson() AS geometry "
+            where_dict = self._get_where_clauses(
+                properties=properties,
+                bbox=bbox,
+                bbox_crs=self.storage_crs,
+                sdo_param=self.sdo_param,
+                sdo_operator=self.sdo_operator,
+            )
 
-        orderby = self._get_orderby(sortby) if sortby else ""
+            # Get correct SRID
+            if crs_transform_spec is not None:
+                source_crs = pyproj.CRS.from_wkt(
+                    crs_transform_spec.source_crs_wkt
+                )
+                source_srid = self._get_srid_from_crs(source_crs)
 
-        # Create paging and add placeholders for the
-        # SQL manipulation class
-        paging_bind = {}
-        if limit > 0:
-            sql_query = f"SELECT #HINTS# {props} {geom} \
+                target_crs = pyproj.CRS.from_wkt(
+                    crs_transform_spec.target_crs_wkt
+                )
+                target_srid = self._get_srid_from_crs(target_crs)
+            else:
+                source_srid = self._get_srid_from_crs(self.storage_crs)
+                target_srid = source_srid
+
+                # TODO See Issue #1393
+                # target_srid = self._get_srid_from_crs(self.default_crs)
+                # If issue is not accepted, this block can be merged with
+                # the following block.
+
+            LOGGER.debug(f"source_srid: {source_srid}")
+            LOGGER.debug(f"target_srid: {target_srid}")
+
+            # Build geometry column call
+            #   When a different output CRS is definded, the geometry
+            #   geometry column would be transformed.
+            if skip_geometry:
+                geom = ""
+
+            elif source_srid != target_srid:
+                geom = f""", sdo_cs.transform(t1.{self.geom},
+                                            :target_srid).get_geojson()
+                            AS geometry """
+
+                where_dict["properties"].update(
+                    {"target_srid": int(target_srid)}
+                )
+
+            else:
+                geom = f", t1.{self.geom}.get_geojson() AS geometry "
+
+            orderby = self._get_orderby(sortby) if sortby else ""
+
+            # Create paging and add placeholders for the
+            # SQL manipulation class
+            paging_bind = {}
+            if limit > 0:
+                sql_query = f"SELECT #HINTS# {props} {geom} \
+                            FROM {self.table} t1 #JOIN# \
+                            {where_dict['clause']} #WHERE# \
+                            {orderby} \
+                            OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY"
+                paging_bind = {"offset": offset, "limit": limit}
+            else:
+                sql_query = f"SELECT #HINTS# {props} {geom} \
                         FROM {self.table} t1 #JOIN# \
                         {where_dict['clause']} #WHERE# \
-                        {orderby} \
-                        OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY"
-            paging_bind = {"offset": offset, "limit": limit}
-        else:
-            sql_query = f"SELECT #HINTS# {props} {geom} \
-                    FROM {self.table} t1 #JOIN# \
-                    {where_dict['clause']} #WHERE# \
-                    {orderby}"
+                        {orderby}"
 
-        # Create dictionary for sql bind variables
-        bind_variables = {**where_dict["properties"], **paging_bind}
+            # Create dictionary for sql bind variables
+            bind_variables = {**where_dict["properties"], **paging_bind}
 
-        # SQL manipulation plugin
-        if self.sql_manipulator:
-            LOGGER.debug("sql_manipulator: " + self.sql_manipulator)
-            manipulation_class = _class_factory(self.sql_manipulator)
-            sql_query, bind_variables = manipulation_class.process_query(
-                db,
-                sql_query,
-                bind_variables,
-                self.sql_manipulator_options,
-                offset,
-                limit,
-                resulttype,
-                bbox,
-                datetime_,
-                properties,
-                sortby,
-                skip_geometry,
-                select_properties,
-                crs_transform_spec,
-                q,
-                language,
-                filterq,
-            )
+            # SQL manipulation plugin
+            if self.sql_manipulator:
+                LOGGER.debug("sql_manipulator: " + self.sql_manipulator)
+                manipulation_class = _class_factory(self.sql_manipulator)
+                sql_query, bind_variables = manipulation_class.process_query(
+                    db,
+                    sql_query,
+                    bind_variables,
+                    self.sql_manipulator_options,
+                    offset,
+                    limit,
+                    resulttype,
+                    bbox,
+                    datetime_,
+                    properties,
+                    sortby,
+                    skip_geometry,
+                    select_properties,
+                    crs_transform_spec,
+                    q,
+                    language,
+                    filterq,
+                )
 
-        # Clean up placeholders that aren't used by the
-        # manipulation class.
-        sql_query = sql_query.replace("#HINTS#", "")
-        sql_query = sql_query.replace("#JOIN#", "")
-        sql_query = sql_query.replace("#WHERE#", "")
+            # Clean up placeholders that aren't used by the
+            # manipulation class.
+            sql_query = sql_query.replace("#HINTS#", "")
+            sql_query = sql_query.replace("#JOIN#", "")
+            sql_query = sql_query.replace("#WHERE#", "")
 
-        LOGGER.debug(f"SQL Query: {sql_query}")
-        LOGGER.debug(f"Bind variables: {bind_variables}")
+            LOGGER.debug(f"SQL Query: {sql_query}")
+            LOGGER.debug(f"Bind variables: {bind_variables}")
 
-        try:
-            cursor.execute(sql_query, bind_variables)
-        except oracledb.Error as err:
-            LOGGER.error(f"Error executing sql_query: {sql_query}")
-            LOGGER.error(err)
-            raise ProviderQueryError()
+            try:
+                cursor.execute(sql_query, bind_variables)
+            except oracledb.Error as err:
+                LOGGER.error(f"Error executing sql_query: {sql_query}")
+                LOGGER.error(err)
+                raise ProviderQueryError()
 
-        # Convert row resultset to dictionary
-        columns = [col[0] for col in cursor.description]
-        cursor.rowfactory = lambda *args: dict(zip(columns, args))
+            # Convert row resultset to dictionary
+            columns = [col[0] for col in cursor.description]
+            cursor.rowfactory = lambda *args: dict(zip(columns, args))
 
-        row_data = cursor.fetchall()
+            row_data = cursor.fetchall()
 
-        # Generate feature JSON
-        features = [self._response_feature(rd) for rd in row_data]
-        feature_collection = {
-            "type": "FeatureCollection",
-            "features": features,
-            "numberMatched": hits
-        }
+            # Generate feature JSON
+            features = [self._response_feature(rd) for rd in row_data]
+            feature_collection = {
+                "type": "FeatureCollection",
+                "features": features,
+                "numberMatched": hits
+            }
 
-        # return feature_collection
+            # return feature_collection
 
     def _get_previous(self, cursor, identifier):
         """
