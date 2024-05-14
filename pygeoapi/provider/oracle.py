@@ -574,7 +574,7 @@ class OracleProvider(BaseProvider):
                             f"Missing mandatory filter property: {mand_col}"
                         )
 
-        if True:
+        if resulttype == "hits":
             with DatabaseConnection(
                 self.conn_dic,
                 self.table,
