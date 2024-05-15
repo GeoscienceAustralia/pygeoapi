@@ -898,12 +898,12 @@ class OracleProvider(BaseProvider):
             feature = self._response_feature(row_data)
 
             if feature:
-                previous_id = self._get_previous(cursor, identifier)
+                previous_id = self._get_previous(cursor, identifier.get("id"))
                 if previous_id:
                     feature["prev"] = previous_id
-                next_id = self._get_next(cursor, identifier)
+                next_id = self._get_next(cursor, identifier.get("id"))
                 if next_id:
-                    feature["next"] = self._get_next(cursor, identifier)
+                    feature["next"] = self._get_next(cursor, identifier.get("id"))
                 return feature
             else:
                 err = f"item identifier {identifier} not found"
