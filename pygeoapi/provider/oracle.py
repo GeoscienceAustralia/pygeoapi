@@ -746,10 +746,9 @@ class OracleProvider(BaseProvider):
             feature_collection = {
                 "type": "FeatureCollection",
                 "features": features,
-                "numberMatched": hits
             }
 
-            # return feature_collection
+            return feature_collection
 
     def _get_previous(self, cursor, identifier):
         """
