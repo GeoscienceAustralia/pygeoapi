@@ -1142,7 +1142,8 @@ class OracleProvider(BaseProvider):
 
                 raise ProviderQueryError()
 
-        return rowcount == 1
+        # return rowcount == 1
+        return rowcount
 
     def delete(self, identifier):
         """
