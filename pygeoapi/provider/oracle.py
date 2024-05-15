@@ -680,6 +680,11 @@ class OracleProvider(BaseProvider):
             # SQL manipulation class
             paging_bind = {}
             if limit > 0:
+                offset=offset if offset > 0 else 0
+
+                # Add paging
+                limit = limit if limit > 0 else 10000
+                
                 sql_query = f"SELECT #HINTS# {props} {geom} \
                               FROM {self.table} t1 #JOIN# \
                               {where_dict['clause']} #WHERE# \
