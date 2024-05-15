@@ -574,7 +574,7 @@ class OracleProvider(BaseProvider):
                             f"Missing mandatory filter property: {mand_col}"
                         )
 
-        # GA customisation - the whole part below until Line 755
+        # GA customisation - the whole part below until Line 755 (pagination)
         # if resulttype == "hits":
         with DatabaseConnection(
             self.conn_dic,
