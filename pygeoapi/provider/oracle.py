@@ -540,7 +540,6 @@ class OracleProvider(BaseProvider):
         q=None,
         language=None,
         filterq=None,
-        **kwargs,
     ):
         """
         Query Oracle for all the content.
@@ -575,7 +574,6 @@ class OracleProvider(BaseProvider):
                         )
         
         # Get results
-        results = None
         if resulttype == "results":
             with DatabaseConnection(
                 self.conn_dic,
@@ -606,19 +604,6 @@ class OracleProvider(BaseProvider):
                 results = cursor.fetchall()
 
                 LOGGER.debug(f"results: {str(results)}")
-        
-        # Get results
-        matched = len(results)
-        if matched == 0:
-            return {"type": "FeatureCollection", "features": []}
-
-        # Get response
-        response = {
-            "type": "FeatureCollection",
-            "numberMatched": matched,
-            "numberReturned": matched,
-            "features": [],
-        }
 
         # Get hits
         if resulttype == "hits" or not results:
@@ -654,7 +639,7 @@ class OracleProvider(BaseProvider):
                 hits = cursor.fetchone()[0]
                 LOGGER.debug(f"hits: {str(hits)}")
 
-            return response
+            return self._response_feature_hits(hits)
 
         with DatabaseConnection(
             self.conn_dic, self.table, properties=self.properties
