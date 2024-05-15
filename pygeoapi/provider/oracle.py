@@ -680,17 +680,6 @@ class OracleProvider(BaseProvider):
             # SQL manipulation class
             paging_bind = {}
             if limit > 0:
-                # Add offset and limit
-                page = int(offset / limit) + 1
-                offset = (page - 1) * limit if page > 0 else 0
-
-                where_dict["properties"].update({"offset": offset})
-                where_dict["properties"].update({"limit": limit})
-
-                # Remove "WHERE" from where clause
-                where_dict["clause"] = where_dict["clause"].replace("WHERE", "")
-
-                # Create SQL query for paging
                 sql_query = f"SELECT #HINTS# {props} {geom} \
                               FROM {self.table} t1 #JOIN# \
                               {where_dict['clause']} #WHERE# \
