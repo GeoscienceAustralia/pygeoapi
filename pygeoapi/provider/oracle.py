@@ -678,14 +678,14 @@ class OracleProvider(BaseProvider):
 
             # Create paging and add placeholders for the
             # SQL manipulation class
-            paging_bind = {}
+            # paging_bind = {}
             if limit > 0:
                 sql_query = f"SELECT #HINTS# {props} {geom} \
                               FROM {self.table} t1 #JOIN# \
                               {where_dict['clause']} #WHERE# \
                               {orderby} \
                               OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY"
-                paging_bind = {"offset": offset, "limit": limit}
+                # paging_bind = {"offset": offset, "limit": limit}
             else:
                 sql_query = f"SELECT #HINTS# {props} {geom} \
                         FROM {self.table} t1 #JOIN# \
@@ -693,7 +693,7 @@ class OracleProvider(BaseProvider):
                         {orderby}"
 
             # Create dictionary for sql bind variables
-            bind_variables = {**where_dict["properties"], **paging_bind}
+            bind_variables = {**where_dict["properties"]}
 
             # SQL manipulation plugin
             if self.sql_manipulator:
