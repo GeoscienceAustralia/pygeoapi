@@ -745,6 +745,7 @@ class OracleProvider(BaseProvider):
             features = [self._response_feature(rd) for rd in row_data]
             feature_collection = {
                 "type": "FeatureCollection",
+                "numberMatched": 100,
                 "features": features,
             }
 
