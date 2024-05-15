@@ -764,13 +764,12 @@ class OracleProvider(BaseProvider):
                    AND {self.id_field} < :{self.id_field} \
                  ORDER BY {self.id_field} DESC"
 
-        # bind_variables = {self.id_field: identifier}
+        bind_variables = {self.id_field: identifier}
 
         LOGGER.debug(f"SQL Query: {sql}")
-        # LOGGER.debug(f"Bind variables: {str(bind_variables)}")
+        LOGGER.debug(f"Bind variables: {str(bind_variables)}")
 
-        # cursor.execute(sql, bind_variables)
-        cursor.execute(sql, {self.id_field: identifier})
+        cursor.execute(sql, bind_variables)
 
         item = cursor.fetchall()
         id = item[0][0] if item else None
@@ -791,13 +790,12 @@ class OracleProvider(BaseProvider):
                    AND {self.id_field} > :{self.id_field} \
                  ORDER BY {self.id_field} ASC"
 
-        # bind_variables = {self.id_field: identifier}
+        bind_variables = {self.id_field: identifier}
 
         LOGGER.debug(f"SQL Query: {sql}")
-        # LOGGER.debug(f"Bind variables: {str(bind_variables)}")
+        LOGGER.debug(f"Bind variables: {str(bind_variables)}")
 
-        # cursor.execute(sql, bind_variables)
-        cursor.execute(sql, {self.id_field: identifier})
+        cursor.execute(sql, bind_variables)
 
         item = cursor.fetchall()
         id = item[0][0] if item else None
