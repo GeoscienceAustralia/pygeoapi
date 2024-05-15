@@ -573,8 +573,47 @@ class OracleProvider(BaseProvider):
                         raise ProviderInvalidQueryError(
                             f"Missing mandatory filter property: {mand_col}"
                         )
+        
+        # Get results
+        results = None
+        if resulttype == "results":
+            with DatabaseConnection(
+                self.conn_dic,
+                self.table,
+                properties=self.properties,
+                context="results",
+            ) as db:
+                cursor = db.conn.cursor()
 
-        if resulttype == "hits":
+                where_dict = self._get_where_clauses(
+                    properties=properties,
+                    bbox=bbox,
+                    bbox_crs=self.storage_crs,
+                    sdo_param=self.sdo_param,
+                    sdo_operator=self.sdo_operator,
+                )
+
+                sql_query = f"SELECT * FROM {self.table} {where_dict['clause']}"
+
+                try:
+                    cursor.execute(sql_query, where_dict["properties"])
+                except oracledb.Error as err:
+                    LOGGER.error(
+                        f"Error executing sql_query: {sql_query}: {err}"
+                    )
+                    raise ProviderQueryError()
+
+                results = cursor.fetchall()
+
+                LOGGER.debug(f"results: {str(results)}")
+        
+        # Get results
+        matched = len(results)
+        if matched == 0:
+            return {"type": "FeatureCollection", "features": []}
+
+        # Get hits
+        if resulttype == "hits" or not results:
             with DatabaseConnection(
                 self.conn_dic,
                 self.table,
