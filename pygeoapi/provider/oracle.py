@@ -540,6 +540,7 @@ class OracleProvider(BaseProvider):
         q=None,
         language=None,
         filterq=None,
+        **kwargs,
     ):
         """
         Query Oracle for all the content.
