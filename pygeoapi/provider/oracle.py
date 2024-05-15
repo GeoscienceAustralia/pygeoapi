@@ -612,6 +612,14 @@ class OracleProvider(BaseProvider):
         if matched == 0:
             return {"type": "FeatureCollection", "features": []}
 
+        # Get response
+        response = {
+            "type": "FeatureCollection",
+            "numberMatched": matched,
+            "numberReturned": matched,
+            "features": [],
+        }
+
         # Get hits
         if resulttype == "hits" or not results:
             with DatabaseConnection(
@@ -646,7 +654,7 @@ class OracleProvider(BaseProvider):
                 hits = cursor.fetchone()[0]
                 LOGGER.debug(f"hits: {str(hits)}")
 
-            return self._response_feature_hits(hits)
+            return response
 
         with DatabaseConnection(
             self.conn_dic, self.table, properties=self.properties
