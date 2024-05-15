@@ -898,12 +898,12 @@ class OracleProvider(BaseProvider):
             feature = self._response_feature(row_data)
 
             if feature:
-                previous_id = self._get_previous(cursor, identifier.get("id"))
+                previous_id = self._get_previous(cursor, identifier)
                 if previous_id:
                     feature["prev"] = previous_id
-                next_id = self._get_next(cursor, identifier.get("id"))
+                next_id = self._get_next(cursor, identifier)
                 if next_id:
-                    feature["next"] = self._get_next(cursor, identifier.get("id"))
+                    feature["next"] = self._get_next(cursor, identifier)
                 return feature
             else:
                 err = f"item identifier {identifier} not found"
@@ -1142,8 +1142,7 @@ class OracleProvider(BaseProvider):
 
                 raise ProviderQueryError()
 
-        # return rowcount == 1
-        return rowcount
+        return rowcount == 1
 
     def delete(self, identifier):
         """
@@ -1194,8 +1193,7 @@ class OracleProvider(BaseProvider):
 
                 raise ProviderQueryError()
 
-        # return rowcount == 1
-        return rowcount
+        return rowcount == 1
 
     def _get_sdo_from_geojson_geometry(self, conn, geometry, srid=4326):
         """
