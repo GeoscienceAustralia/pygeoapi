@@ -574,6 +574,7 @@ class OracleProvider(BaseProvider):
                             f"Missing mandatory filter property: {mand_col}"
                         )
 
+        # GA customisation - the whole part below from this until Line 755
         # if resulttype == "hits":
         with DatabaseConnection(
             self.conn_dic,
@@ -607,6 +608,7 @@ class OracleProvider(BaseProvider):
             hits = cursor.fetchone()[0]
             LOGGER.debug(f"hits: {str(hits)}")
 
+            # GA customisation - desable the return below (pagination)
             # return self._response_feature_hits(hits)
 
         with DatabaseConnection(
@@ -743,9 +745,10 @@ class OracleProvider(BaseProvider):
 
             # Generate feature JSON
             features = [self._response_feature(rd) for rd in row_data]
+            # GA customisation - "numberMatched": hits, (pagination)
             feature_collection = {
-                "type": "FeatureCollection",
                 "numberMatched": hits,
+                "type": "FeatureCollection",
                 "features": features,
             }
 
