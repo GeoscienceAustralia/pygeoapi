@@ -745,7 +745,9 @@ class OracleProvider(BaseProvider):
 
             # Generate feature JSON
             features = [self._response_feature(rd) for rd in row_data]
+            # GA customisation - "numberMatched": hits, (pagination)
             feature_collection = {
+                "numberMatched": hits,
                 "type": "FeatureCollection",
                 "features": features,
             }
