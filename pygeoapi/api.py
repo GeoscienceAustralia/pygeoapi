@@ -2482,6 +2482,10 @@ class API:
                                                         request.locale)
             content['collections_path'] = self.get_collections_url()
 
+            #Add PID Link
+            if collections[dataset]['other']:
+                content['pid'] = collections[dataset]['other']['href']
+
             content = render_j2_template(self.tpl_config,
                                          'collections/items/item.html',
                                          content, request.locale)
