@@ -2471,6 +2471,10 @@ class API:
         # locale (or fallback default locale)
         l10n.set_response_language(headers, prv_locale, request.locale)
 
+        #Add PID Link
+        if collections[dataset]['other']:
+            content['pid'] = collections[dataset]['other']['href']
+
         if request.format == F_HTML:  # render
             content['title'] = l10n.translate(collections[dataset]['title'],
                                               request.locale)
@@ -2481,10 +2485,6 @@ class API:
                 content['title_field'] = l10n.translate(p.title_field,
                                                         request.locale)
             content['collections_path'] = self.get_collections_url()
-
-            #Add PID Link
-            if collections[dataset]['other']:
-                content['pid'] = collections[dataset]['other']['href']
 
             content = render_j2_template(self.tpl_config,
                                          'collections/items/item.html',
