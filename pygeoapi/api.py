@@ -2471,9 +2471,10 @@ class API:
         # locale (or fallback default locale)
         l10n.set_response_language(headers, prv_locale, request.locale)
 
-        #Add PID Link
+        # GA customisation - Add PID Link
         if collections[dataset]['other']:
-            content['pid'] = collections[dataset]['other']['href']
+            content['pid'] = f'{collections[dataset]["other"]["href"]}{identifier}'
+        # End GA customisation
 
         if request.format == F_HTML:  # render
             content['title'] = l10n.translate(collections[dataset]['title'],
