@@ -109,7 +109,15 @@
                       {% if l['href'] %}
                         <li><a href="{{ l['href'] }}" title="{{ l['title'] or l['href'].split('/') }}">{{ l['title'] or (l['href'].split('/') | last) | truncate( 25 ) }}</a>
                         {% if l['type'] %}
-                          ({{ l['type'] }})
+                          {% if l['rel'] == 'collection' %}
+                            '(html/Item page)'
+                          {% elif l['rel'] == 'next' %}
+                            '(next page)'
+                          {% elif l['rel'] == 'prev' %}
+                            '(previous page)'
+                          {% else %}
+                            ({{ l['type'] }})
+                          {% endif %}
                         {% endif %}
                         </li>
                       {% endif %}
