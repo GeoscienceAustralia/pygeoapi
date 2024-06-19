@@ -2471,7 +2471,7 @@ class API:
         # locale (or fallback default locale)
         l10n.set_response_language(headers, prv_locale, request.locale)
 
-        # GA customisation - Add PID Link
+        # Start GA customisation - Add PID Link
         if collections[dataset]['other']:
             content['pid'] = f'{collections[dataset]["other"]["href"]}{identifier}'
         # End GA customisation
