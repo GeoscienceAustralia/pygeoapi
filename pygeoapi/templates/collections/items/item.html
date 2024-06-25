@@ -109,7 +109,17 @@
                       {% if l['href'] %}
                         <li><a href="{{ l['href'] }}" title="{{ l['title'] or l['href'].split('/') }}">{{ l['title'] or (l['href'].split('/') | last) | truncate( 25 ) }}</a>
                         {% if l['type'] %}
-                          ({{ l['type'] }})
+                          <!-- Start GA customisation renaming collection/prev/next link -->
+                          {% if l['rel'] == 'collection' %}
+                            (text/html)
+                          {% elif l['rel'] == 'next' %}
+                            (next page)
+                          {% elif l['rel'] == 'prev' %}
+                            (previous page)
+                          {% else %}
+                            ({{ l['type'] }})
+                          {% endif %}
+                          <!-- End GA customisation --> 
                         {% endif %}
                         </li>
                       {% endif %}
