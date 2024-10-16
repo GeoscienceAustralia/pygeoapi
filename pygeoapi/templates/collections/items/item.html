@@ -123,6 +123,9 @@
                         {% endif %}
                         </li>
                       {% endif %}
+		                  {% if l['title'] == 'Borehole' %}
+		                    <li><a href="{{ data['pid'] }}?f=xml" title="PID (WFS-XML Format)">PID (WFS-XML Format)</a> (application/wfs-xml) </li> 
+		                  {% endif %}
                       {% endfor %}
                     </ul>
                   </td>
