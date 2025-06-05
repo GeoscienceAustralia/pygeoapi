@@ -4,51 +4,41 @@ on:
   push:
     paths-ignore:
       - '**.md'
+      - 'docs/**'
   pull_request:
     branches:
       - master
     paths-ignore:
       - '!**.md'
+      - 'docs/**'
   release:
     types:
       - released
 
 jobs:
-  flake8_py3:
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Setup Python
-        uses: actions/setup-python@v1
-        with:
-          python-version: 3.8
-          architecture: x64
-      - name: Checkout pygeoapi
-        uses: actions/checkout@master
-      - name: Install flake8
-        run: pip install flake8
-      - name: Run flake8
-        uses: suo/flake8-github-action@releases/v1
-        with:
-          checkName: 'flake8_py3'   # NOTE: this needs to be the same as the job name
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   main:
-    needs: [flake8_py3]
     runs-on: ubuntu-22.04
     strategy:
       matrix:
         include:
-          - python-version: 3.8
+          - python-version: '3.10'
     env:
       PYGEOAPI_CONFIG: "$(pwd)/pygeoapi-config.yml"
     
     steps:
+    - name: Clear up GitHub runner diskspace
+      run: |
+        echo "Space before"
+        df -h /
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/dotnet
+        echo "Space after"
+        df -h /
     - name: Chown user
       run: |
         sudo chown -R $USER:$USER $GITHUB_WORKSPACE
-    - uses: actions/checkout@v2
-    - uses: actions/setup-python@v2
+    - uses: actions/checkout@master
+    - uses: actions/setup-python@v5
       name: Setup Python ${{ matrix.python-version }}
       with:
         python-version: ${{ matrix.python-version }}
@@ -66,28 +56,37 @@ jobs:
     - name: Install and run Elasticsearch 📦
       uses: getong/elasticsearch-action@v1.2
       with:
-        elasticsearch version: '8.3.1'
+        elasticsearch version: '8.17.0'
         host port: 9200
         container port: 9200
         host node port: 9300
         node port: 9300
         discovery type: 'single-node'
-    - name: Install and run MongoDB
-      uses: supercharge/mongodb-github-action@1.5.0
+    - name: Install and run OpenSearch 📦
+      uses: esmarkowski/opensearch-github-action@v1.0.0
       with:
-        mongodb-version: 4.4
+        version: 2.18.0
+        security-disabled: true
+        port: 9209
+    - name: Install and run MongoDB
+      uses: supercharge/mongodb-github-action@1.12.0
+      with:
+        mongodb-version: '8.0.4'
     - name: Install and run SensorThingsAPI
-      uses: cgs-earth/sensorthings-action@v0.0.2
+      uses: cgs-earth/sensorthings-action@v0.1.0
     - name: Install sqlite and gpkg dependencies
-      uses: awalsh128/cache-apt-pkgs-action@latest
+      uses: awalsh128/cache-apt-pkgs-action@v1.4.3
       with:
         packages: libsqlite3-mod-spatialite
         version: 4.3.0a-6build1
+    - name: Use ubuntuGIS unstable ppa
+      run: sudo add-apt-repository ppa:ubuntugis/ubuntugis-unstable && sudo apt update
+      shell: bash
     - name: Install GDAL with Python bindings
-      uses: awalsh128/cache-apt-pkgs-action@latest
+      uses: awalsh128/cache-apt-pkgs-action@v1.4.3
       with:
         packages: gdal-bin libgdal-dev
-        version: 3.0.4
+        version: 3.8.4
     - name: Install and run Oracle
       run: |
         docker run -d --name oracledb -e ORACLE_PWD=oracle -v ${{ github.workspace }}/tests/data/oracle/init-db:/opt/oracle/scripts/startup -p 1521:1521 container-registry.oracle.com/database/express:21.3.0-xe
@@ -98,37 +97,38 @@ jobs:
         pip3 install -r requirements-starlette.txt
         pip3 install -r requirements-dev.txt
         pip3 install -r requirements-provider.txt
+        pip3 install -r requirements-manager.txt
         pip3 install -r requirements-django.txt
-        pip3 install -r docs/requirements.txt
         python3 setup.py install
-        pip3 install --upgrade numpy elasticsearch
-        pip3 install --upgrade numpy "sqlalchemy<2"
-        pip3 install --upgrade flake8
         pip3 install --global-option=build_ext --global-option="-I/usr/include/gdal" GDAL==`gdal-config --version`
         #pip3 install --upgrade rasterio==1.1.8
     - name: setup test data ⚙️
       run: |
         python3 tests/load_es_data.py tests/data/ne_110m_populated_places_simple.geojson geonameid
-        python3 tests/load_es_data.py tests/cite/ogcapi-features/canada-hydat-daily-mean-02HC003.geojson IDENTIFIER
+        python3 tests/load_opensearch_data.py tests/data/ne_110m_populated_places_simple.geojson geonameid
         python3 tests/load_mongo_data.py tests/data/ne_110m_populated_places_simple.geojson
         gunzip < tests/data/hotosm_bdi_waterways.sql.gz | psql postgresql://postgres:${{ secrets.DatabasePassword || 'postgres' }}@localhost:5432/test
         psql postgresql://postgres:${{ secrets.DatabasePassword || 'postgres' }}@localhost:5432/test -f tests/data/dummy_data.sql
+        psql postgresql://postgres:${{ secrets.DatabasePassword || 'postgres' }}@localhost:5432/test -f tests/data/dummy_types_data.sql
+        psql postgresql://postgres:${{ secrets.DatabasePassword || 'postgres' }}@localhost:5432/test -f tests/data/postgres_manager_full_structure.backup.sql
         docker ps
         python3 tests/load_oracle_data.py
     - name: run unit tests ⚙️
       env:
         POSTGRESQL_PASSWORD: ${{ secrets.DatabasePassword || 'postgres' }}
       run: |
-        pytest tests/test_api.py
+        pytest tests/api
         pytest tests/test_api_ogr_provider.py
         pytest tests/test_config.py
         pytest tests/test_csv__formatter.py
         pytest tests/test_csv__provider.py
         pytest tests/test_django.py
         pytest tests/test_elasticsearch__provider.py
+        pytest tests/test_opensearch__provider.py
         pytest tests/test_esri_provider.py
         pytest tests/test_filesystem_provider.py
         pytest tests/test_geojson_provider.py
+        pytest tests/test_linked_data.py
         pytest tests/test_mongo_provider.py
         pytest tests/test_ogr_csv_provider.py
         pytest tests/test_ogr_esrijson_provider.py
@@ -136,60 +136,23 @@ jobs:
         pytest tests/test_ogr_shapefile_provider.py
         pytest tests/test_ogr_sqlite_provider.py
         pytest tests/test_ogr_wfs_provider.py
+        pytest tests/test_postgresql_manager.py
+        # pytest tests/test_ogr_wfs_provider_live.py  # NOTE: these are skipped in the file but listed here for completeness
         pytest tests/test_openapi.py
         pytest tests/test_oracle_provider.py
+        pytest tests/test_parquet_provider.py
         pytest tests/test_postgresql_provider.py
         pytest tests/test_rasterio_provider.py
+        pytest tests/test_sensorthings_edr_provider.py 
         pytest tests/test_sensorthings_provider.py
         pytest tests/test_socrata_provider.py
+        # pytest tests/test_socrata_provider_live.py.py  # NOTE: these are skipped in the file but listed here for completeness
         pytest tests/test_sqlite_geopackage_provider.py
         pytest tests/test_tinydb_catalogue_provider.py
         pytest tests/test_tinydb_manager_for_parallel_requests.py
         pytest tests/test_util.py
         pytest tests/test_xarray_netcdf_provider.py
         pytest tests/test_xarray_zarr_provider.py
-    - name: build docs 🏗️
-      run: cd docs && make html
-    - name: failed tests 🚩
-      if: ${{ failure() }}
-      run: |
-        pip3 list -v
-
-  admin:
-    needs: [flake8_py3]
-    runs-on: ubuntu-20.04
-    strategy:
-      matrix:
-        include:
-          - python-version: 3.8
-    env:
-      PYGEOAPI_CONFIG: "tests/pygeoapi-test-config-admin.yml"
-      PYGEOAPI_OPENAPI: "tests/pygeoapi-test-openapi-admin.yml"
-    steps:
-    - uses: actions/checkout@v2
-    - uses: actions/setup-python@v2
-      name: Setup Python ${{ matrix.python-version }}
-      with:
-        python-version: ${{ matrix.python-version }}
-    - uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: gunicorn python3-gevent
-        version: 1.0
-    - name: Install requirements 📦
-      run: |
-        pip3 install -r requirements.txt
-        pip3 install -r requirements-dev.txt
-        pip3 install -r requirements-admin.txt
-        python3 setup.py install
-    - name: Run pygeoapi with admin API ⚙️
-      run: |
-        pygeoapi openapi generate ${PYGEOAPI_CONFIG} --output-file ${PYGEOAPI_OPENAPI}
-        gunicorn --bind 0.0.0.0:5000 \
-                 --reload \
-                 --reload-extra-file ${PYGEOAPI_CONFIG} \
-                 pygeoapi.flask_app:APP &
-    - name: run integration tests ⚙️
-      run: |
         pytest tests/test_admin_api.py
     - name: failed tests 🚩
       if: ${{ failure() }}

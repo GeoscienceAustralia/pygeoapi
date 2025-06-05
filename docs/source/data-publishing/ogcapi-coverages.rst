@@ -18,7 +18,7 @@ parameters.
    :header: Provider, properties, subset, bbox, datetime
    :align: left
 
-   :ref:`Rasterio<rasterio-provider>`,✅,✅,✅,
+   :ref:`Rasterio<rasterio-provider>`,✅,✅,✅,✅
    :ref:`Xarray<xarray-provider>`,✅,✅,✅,✅
 
 
@@ -72,9 +72,12 @@ The `Xarray`_ provider plugin reads and extracts `NetCDF`_ and `Zarr`_ data.
          data: tests/data/coads_sst.nc
          # optionally specify x/y/time fields, else provider will attempt
          # to derive automagically
-         x_field: lat
          x_field: lon
+         y_field: lat
          time_field: time
+         # optionally specify the coordinate reference system of your dataset
+         # else pygeoapi assumes it is WGS84 (EPSG:4326).
+         storage_crs: 4326
          format:
             name: netcdf
             mimetype: application/x-netcdf
@@ -96,37 +99,59 @@ The `Xarray`_ provider plugin reads and extracts `NetCDF`_ and `Zarr`_ data.
    be sure to provide the full S3 URL. Any parameters required to open the dataset
    using fsspec can be added to the config file under `options` and `s3`.
 
+.. note::
+   When providing a `storage_crs` value in the xarray configuration, specify the 
+   coordinate reference system using any valid input for 
+   `pyproj.CRS.from_user_input`_. 
+
 Data access examples
 --------------------
 
 * list all collections
+
   * http://localhost:5000/collections
+  
 * overview of dataset
+
   * http://localhost:5000/collections/foo
-* coverage rangetype
-  * http://localhost:5000/collections/foo/coverage/rangetype
-* coverage domainset
-  * http://localhost:5000/collections/foo/coverage/domainset
+  
+* schema of dataset
+
+  * http://localhost:5000/collections/foo/schema
+  
 * coverage access via CoverageJSON (default)
+
   * http://localhost:5000/collections/foo/coverage?f=json
+  
 * coverage access via native format (as defined in ``provider.format.name``)
+
   * http://localhost:5000/collections/foo/coverage?f=GRIB
+  
 * coverage access with comma-separated properties
+
   * http://localhost:5000/collections/foo/coverage?properties=1,3
+  
 * coverage access with subsetting
+
   * http://localhost:5000/collections/foo/coverage?subset=lat(10:20)&subset=long(10:20)
+  
 * coverage with bbox
+
   * http://localhost:5000/collections/foo/coverage?bbox=10,10,20,20
+  
 * coverage with bbox and bbox CRS
+
   * http://localhost:5000/collections/foo/coverage?bbox=-8794239.772668611,5311971.846945471,-8348961.809495518,5621521.486192066&bbox=crs=3857
+  
 
 .. note::
    ``.../coverage`` queries which return an alternative representation to CoverageJSON (which prompt a download)
    will have the response filename matching the collection name and appropriate file extension (e.g. ``my-dataset.nc``)
 
-.. _`OGC API - Coverages`: https://github.com/opengeospatial/ogcapi-coverages
+.. _`OGC API - Coverages`: https://ogcapi.ogc.org/coverages
 .. _`Rasterio`: https://rasterio.readthedocs.io
 .. _`Xarray`: https://docs.xarray.dev/en/stable
 .. _`NetCDF`: https://en.wikipedia.org/wiki/NetCDF
 .. _`Zarr`: https://zarr.readthedocs.io/en/stable
 .. _`GDAL raster driver short name`: https://gdal.org/drivers/raster/index.html
+.. _`pyproj.CRS.from_user_input`: https://pyproj4.github.io/pyproj/stable/api/crs/coordinate_system.html#pyproj.crs.CoordinateSystem.from_user_input

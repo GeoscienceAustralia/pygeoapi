@@ -1,8 +1,10 @@
 # =================================================================
 #
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
+#          Francesco Martinelli <francesco.martinelli@ingv.it>
 #
 # Copyright (c) 2022 Tom Kralidis
+# Copyright (c) 2024 Francesco Martinelli
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -28,7 +30,7 @@
 # =================================================================
 
 import logging
-from typing import Any, Tuple
+from typing import Any, Tuple, Optional
 
 from pygeoapi.error import GenericError
 
@@ -47,17 +49,40 @@ class BaseProcessor:
 
         :returns: pygeoapi.processor.base.BaseProvider
         """
+
         self.name = processor_def['name']
         self.metadata = process_metadata
+        self.supports_outputs = False
 
-    def execute(self, data: dict) -> Tuple[str, Any]:
+    def set_job_id(self, job_id: str) -> None:
+        """
+        Set the job_id within the processor
+        To be implemented by derived classes where required.
+
+        :param job_id: the job_id assigned to the request by the Manager.
+                       The function should be called by the Manager upon
+                       assigning the job_id. The job_id is intended to be used
+                       by derived classes, e.g. to write temporary files where
+                       filenames contains the string job_id.
+
+        :returns: `None`
+        """
+
+        pass
+
+    def execute(self, data: dict, outputs: Optional[dict] = None
+                ) -> Tuple[str, Any]:
         """
         execute the process
 
         :param data: Dict with the input data that the process needs in order
                      to execute
-
+        :param outputs: `dict` or `list` to optionally specify the subset of
+                        required outputs - defaults to all outputs.
+                        The value of any key may be an object and include the
+                        property `transmissionMode` - defaults to `value`.
         :returns: tuple of MIME type and process response
+                  (string or bytes, or dict)
         """
 
         raise NotImplementedError()

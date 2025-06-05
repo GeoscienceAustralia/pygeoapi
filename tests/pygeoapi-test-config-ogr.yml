@@ -38,11 +38,13 @@ server:
   cors: true
   gzip: false
   pretty_print: true
-  limit: 10
+  limits:
+        default_items: 10
+        max_items: 10
   # templates: /path/to/templates
   map:
-    url: https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}.png
-    attribution: '<a href="https://wikimediafoundation.org/wiki/Maps_Terms_of_Use">Wikimedia maps</a> | Map data &copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap contributors</a>'
+    url: https://tile.openstreetmap.org/{z}/{x}/{y}.png
+    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap contributors</a>'
 
 logging:
   level: DEBUG
@@ -225,7 +227,7 @@ resources:
     keywords:
       - Portugal
       - POI
-      - Point of Interrest
+      - Point of Interest
       - Madeira
       - Azores
       - OSM

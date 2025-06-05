@@ -2,10 +2,9 @@ Babel
 click
 filelock
 Flask
-importlib_metadata
 jinja2
 jsonschema
-pydantic
+pydantic<2.0
 pygeofilter
 pygeoif
 pyproj
@@ -14,9 +13,6 @@ pytz
 PyYAML
 rasterio
 requests
-shapely<2.0
-SQLAlchemy<2.0.0
+shapely
+SQLAlchemy
 tinydb
-typing-extensions
-unicodecsv
-oracledb==2.2.0

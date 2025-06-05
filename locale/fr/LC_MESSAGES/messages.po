@@ -18,6 +18,10 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.9.1\n"
 
+#: pygeoapi/templates/_base.html:2
+msgid "text_direction"
+msgstr "ltr"
+
 #: build/lib/pygeoapi/templates/_base.html:40
 #: build/lib/pygeoapi/templates/landing_page.html:2
 #: pygeoapi/templates/_base.html:40 pygeoapi/templates/landing_page.html:2
@@ -593,3 +597,149 @@ msgstr ""
 msgid "Results of job"
 msgstr ""
 
+msgid "This document as JSON"
+msgstr ""
+
+msgid "This document as RDF (JSON-LD)"
+msgstr ""
+
+msgid "This document as HTML"
+msgstr ""
+
+msgid "The OpenAPI definition as JSON"
+msgstr ""
+
+msgid "The list of supported tiling schemes as JSON"
+msgstr ""
+
+msgid "The list of supported tiling schemes as HTML"
+msgstr ""
+
+msgid "The landing page of this server as JSON"
+msgstr ""
+
+msgid "The landing page of this server as HTML"
+msgstr ""
+
+msgid "Schema of collection in JSON"
+msgstr ""
+
+msgid "Schema of collection in HTML"
+msgstr ""
+
+msgid "Queryables for this collection as JSON"
+msgstr ""
+
+msgid "Queryables for this collection as HTML"
+msgstr ""
+
+msgid "Items as GeoJSON"
+msgstr ""
+
+msgid "Items as HTML"
+msgstr ""
+
+msgid "Items as RDF (GeoJSON-LD)"
+msgstr ""
+
+msgid "Coverage data"
+msgstr ""
+
+msgid "Coverage data as"
+msgstr ""
+
+msgid "Tiles as HTML"
+msgstr ""
+
+msgid "Tiles as JSON"
+msgstr ""
+
+msgid "query for this collection as HTML"
+msgstr ""
+
+msgid "query for this collection as JSON"
+msgstr ""
+
+msgid "Items (prev)"
+msgstr ""
+
+msgid "Items (next)"
+msgstr ""
+
+msgid "Process description as JSON"
+msgstr ""
+
+msgid "Process description as HTML"
+msgstr ""
+
+msgid "query for this collection as HTML"
+msgstr ""
+
+msgid "Execution for process as JSON"
+msgstr ""
+
+msgid "Jobs list as JSON"
+msgstr ""
+
+msgid "Jobs list as HTML"
+msgstr ""
+
+msgid "Results of job as JSON"
+msgstr ""
+
+msgid "Results of job as HTML"
+msgstr ""
+
+msgid "The job list for the current process"
+msgstr ""
+
+msgid "TileMatrixSet definition in JSON"
+msgstr ""
+
+msgid "Data collections in this service"
+msgstr ""
+
+msgid "Record collections in this service"
+msgstr ""
+
+msgid "Display Schema"
+msgstr ""
+
+msgid "Display Schema of"
+msgstr ""
+
+msgid "Contact"
+msgstr ""
+
+msgid "CRS"
+msgstr ""
+
+msgid "Epoch"
+msgstr ""
+
+msgid "not specified"
+msgstr ""
+
+msgid "Position"
+msgstr ""
+
+msgid "Cube"
+msgstr ""
+
+msgid "Area"
+msgstr ""
+
+msgid "Corridor"
+msgstr ""
+
+msgid "Trajectory"
+msgstr ""
+
+msgid "Radius"
+msgstr ""
+
+msgid "Locations"
+msgstr ""
+
+msgid "Instances"
+msgstr ""

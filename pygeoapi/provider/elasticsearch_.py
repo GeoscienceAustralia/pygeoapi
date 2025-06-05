@@ -1,9 +1,10 @@
 # =================================================================
 #
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
+#          Francesco Bartoli <xbartolone@gmail.com>
 #
-# Copyright (c) 2023 Tom Kralidis
-# Copyright (c) 2021 Francesco Bartoli
+# Copyright (c) 2024 Tom Kralidis
+# Copyright (c) 2024 Francesco Bartoli
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -35,13 +36,14 @@ import logging
 import uuid
 
 from elasticsearch import Elasticsearch, exceptions, helpers
-from elasticsearch_dsl import Search, Q
+from pygeofilter.backends.elasticsearch import to_filter
+
+from elasticsearch_dsl import Search
 
 from pygeoapi.provider.base import (BaseProvider, ProviderConnectionError,
                                     ProviderQueryError,
                                     ProviderItemNotFoundError)
-from pygeoapi.models.cql import CQLModel, get_next_node
-from pygeoapi.util import get_envelope, crs_transform
+from pygeoapi.util import crs_transform
 
 
 LOGGER = logging.getLogger(__name__)
@@ -86,7 +88,7 @@ class ElasticsearchProvider(BaseProvider):
 
         LOGGER.debug('Grabbing field information')
         try:
-            self.fields = self.get_fields()
+            self.get_fields()
         except exceptions.NotFoundError as err:
             LOGGER.error(err)
             raise ProviderQueryError(err)
@@ -97,38 +99,56 @@ class ElasticsearchProvider(BaseProvider):
 
         :returns: dict of fields
         """
+        if not self._fields:
+            ii = self.es.indices.get(index=self.index_name,
+                                     allow_no_indices=False)
 
-        fields_ = {}
-        ii = self.es.indices.get(index=self.index_name, allow_no_indices=False)
-
-        LOGGER.debug(f'Response: {ii}')
-        try:
-            if '*' not in self.index_name:
-                p = ii[self.index_name]['mappings']['properties']['properties']
-            else:
-                LOGGER.debug('Wildcard index; setting from first match')
-                index_name_ = list(ii.keys())[0]
-                p = ii[index_name_]['mappings']['properties']['properties']
-        except KeyError:
-            LOGGER.warning('Trying for alias')
-            alias_name = next(iter(ii))
-            p = ii[alias_name]['mappings']['properties']['properties']
-        except IndexError:
-            LOGGER.warning('could not get fields; returning empty set')
-            return {}
-
-        for k, v in p['properties'].items():
-            if 'type' in v:
-                if v['type'] == 'text':
-                    fields_[k] = {'type': 'string'}
-                elif v['type'] == 'date':
-                    fields_[k] = {'type': 'string', 'format': 'date'}
-                elif v['type'] in ('float', 'long'):
-                    fields_[k] = {'type': 'number', 'format': v['type']}
+            LOGGER.debug(f'Response: {ii}')
+            try:
+                if '*' not in self.index_name:
+                    mappings = ii[self.index_name]['mappings']
+                    p = mappings['properties']['properties']
                 else:
-                    fields_[k] = {'type': v['type']}
+                    LOGGER.debug('Wildcard index; setting from first match')
+                    index_name_ = list(ii.keys())[0]
+                    p = ii[index_name_]['mappings']['properties']['properties']
+            except KeyError:
+                LOGGER.warning('Trying for alias')
+                alias_name = next(iter(ii))
+                p = ii[alias_name]['mappings']['properties']['properties']
+            except IndexError:
+                LOGGER.warning('could not get fields; returning empty set')
+                return {}
 
-        return fields_
+            self._fields = self.get_nested_fields(p, self._fields)
+        return self._fields
+
+    def get_nested_fields(self, properties, fields, prev_field=None):
+        """
+        Get Elasticsearch fields (names, types) for all nested properties
+
+        :param properties: `dict` of Elasticsearch mappings properties
+        :param fields: `dict` of fields in the current iteration
+        :param prev_field: name of the parent field
+
+        :returns: dict of fields
+        """
+        for k, v in properties['properties'].items():
+
+            cur_field = k if prev_field is None else f'{prev_field}.{k}'
+
+            if isinstance(v, dict) and 'properties' in v:
+                fields = self.get_nested_fields(v, fields, cur_field)
+            else:
+                if v['type'] == 'text':
+                    fields[cur_field] = {'type': 'string'}
+                elif v['type'] == 'date':
+                    fields[cur_field] = {'type': 'string', 'format': 'date'}
+                elif v['type'] in ('float', 'long'):
+                    fields[cur_field] = {'type': 'number', 'format': v['type']}
+                else:
+                    fields[cur_field] = {'type': v['type']}
+        return fields
 
     @crs_transform
     def query(self, offset=0, limit=10, resulttype='results',
@@ -294,7 +314,7 @@ class ElasticsearchProvider(BaseProvider):
         try:
             LOGGER.debug('querying Elasticsearch')
             if filterq:
-                LOGGER.debug(f'adding cql object: {filterq.model_dump_json()}')
+                LOGGER.debug(f'adding cql object: {filterq}')
                 query = update_query(input_query=query, cql=filterq)
             LOGGER.debug(json.dumps(query, indent=4))
 
@@ -486,8 +506,8 @@ class ElasticsearchProvider(BaseProvider):
                 try:
                     feature_thinned['properties'][p] = feature_['properties'][p]  # noqa
                 except KeyError as err:
-                    LOGGER.error(err)
-                    raise ProviderQueryError()
+                    msg = f'Property missing {err}; continuing'
+                    LOGGER.warning(msg)
 
         if feature_thinned:
             return feature_thinned
@@ -566,183 +586,8 @@ class ElasticsearchCatalogueProvider(ElasticsearchProvider):
         return f'<ElasticsearchCatalogueProvider> {self.data}'
 
 
-class ESQueryBuilder:
-    def __init__(self):
-        self._operation = None
-        self.must_value = {}
-        self.should_value = {}
-        self.mustnot_value = {}
-        self.filter_value = {}
-
-    def must(self, must_value):
-        self.must_value = must_value
-        return self
-
-    def should(self, should_value):
-        self.should_value = should_value
-        return self
-
-    def must_not(self, mustnot_value):
-        self.mustnot_value = mustnot_value
-        return self
-
-    def filter(self, filter_value):
-        self.filter_value = filter_value
-        return self
-
-    @property
-    def operation(self):
-        return self._operation
-
-    @operation.setter
-    def operation(self, value):
-        self._operation = value
-
-    def build(self):
-        if self.must_value:
-            must_clause = self.must_value or {}
-        if self.should_value:
-            should_clause = self.should_value or {}
-        if self.mustnot_value:
-            mustnot_clause = self.mustnot_value or {}
-        if self.filter_value:
-            filter_clause = self.filter_value or {}
-        else:
-            filter_clause = {}
-
-        # to figure out how to deal with logical operations
-        # return match_clause & range_clause
-        clauses = must_clause or should_clause or mustnot_clause
-        filters = filter_clause
-        if self.operation == 'and':
-            res = Q(
-                'bool',
-                must=[clause for clause in clauses],
-                filter=[filter for filter in filters])
-        elif self.operation == 'or':
-            res = Q(
-                'bool',
-                should=[clause for clause in clauses],
-                filter=[filter for filter in filters])
-        elif self.operation == 'not':
-            res = Q(
-                'bool',
-                must_not=[clause for clause in clauses],
-                filter=[filter for filter in filters])
-        else:
-            if filters:
-                res = Q(
-                    'bool',
-                    must=[clauses],
-                    filter=[filters])
-            else:
-                res = Q(
-                    'bool',
-                    must=[clauses])
-
-        return res
-
-
-def _build_query(q, cql):
-
-    # this would be handled by the AST with the traverse of CQL model
-    op, node = get_next_node(cql.root)
-    q.operation = op
-    if isinstance(node, list):
-        query_list = []
-        for elem in node:
-            op, next_node = get_next_node(elem)
-            if not getattr(next_node, 'between', 0) == 0:
-                property = next_node.between.value.root.root.property
-                lower = next_node.between.lower.root.root
-                upper = next_node.between.upper.root.root
-                query_list.append(Q(
-                    {
-                        'range':
-                            {
-                                f'{property}': {
-                                    'gte': lower, 'lte': upper
-                                }
-                            }
-                    }
-                ))
-            if not getattr(next_node, 'root', 0) == 0:
-                scalars = tuple(next_node.root.eq.root)
-                property = scalars[0].root.property
-                value = scalars[1].root.root
-                query_list.append(Q(
-                    {'match': {f'{property}': f'{value}'}}
-                ))
-        q.must(query_list)
-    elif not getattr(node, 'between', 0) == 0:
-        property = node.between.value.root.root.property
-        lower = None
-        if not getattr(node.between.lower,
-                       'root', 0) == 0:
-            lower = node.between.lower.root.root
-        upper = None
-        if not getattr(node.between.upper,
-                       'root', 0) == 0:
-            upper = node.between.upper.root.root
-        query = Q(
-            {
-                'range':
-                    {
-                        f'{property}': {
-                            'gte': lower, 'lte': upper
-                        }
-                    }
-            }
-        )
-        q.must(query)
-    elif not getattr(node, 'root', 0) == 0:
-        next_op, next_node = get_next_node(node)
-        if not getattr(next_node, 'eq', 0) == 0:
-            scalars = tuple(next_node.eq.root)
-            property = scalars[0].root.property
-            value = scalars[1].root.root
-            query = Q(
-                {'match': {f'{property}': f'{value}'}}
-            )
-            q.must(query)
-    elif not getattr(node, 'intersects', 0) == 0:
-        property = node.intersects.root[0].root.property
-        if property == 'geometry':
-            geom_type = node.intersects.root[
-                1].root.root.root.type
-            if geom_type == 'Polygon':
-                coordinates = node.intersects.root[
-                    1].root.root.root.coordinates
-                coords_list = [
-                    poly_coords.root for poly_coords in coordinates[0]
-                ]
-                filter_ = Q(
-                    {
-                        'geo_shape': {
-                            'geometry': {
-                                'shape': {
-                                    'type': 'envelope',
-                                    'coordinates': get_envelope(
-                                        coords_list)
-                                },
-                                'relation': 'intersects'
-                            }
-                        }
-                    }
-                )
-                query_all = Q(
-                    {'match_all': {}}
-                )
-                q.must(query_all)
-                q.filter(filter_)
-    return q.build()
-
-
-def update_query(input_query: Dict, cql: CQLModel):
+def update_query(input_query: Dict, cql):
     s = Search.from_dict(input_query)
-    query = ESQueryBuilder()
-    output_query = _build_query(query, cql)
-    s = s.query(output_query)
-
+    s = s.query(to_filter(cql))
     LOGGER.debug(f'Enhanced query: {json.dumps(s.to_dict())}')
     return s.to_dict()

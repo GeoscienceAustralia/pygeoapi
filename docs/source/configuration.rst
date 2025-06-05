@@ -49,16 +49,26 @@ For more information related to API design rules (the ``api_rules`` property in 
     gzip: false # default server config to gzip/compress responses to requests with gzip in the Accept-Encoding header
     cors: true  # boolean on whether server should support CORS
     pretty_print: true  # whether JSON responses should be pretty-printed
-    limit: 10  # server limit on number of items to return
+
+    limits:  # server limits on number of items to return.  This property can also be defined at the resource level to override global server settings
+        default_items: 50
+        max_items: 1000
+        max_distance_x: 25
+        max_distance_y: 25
+        max_distance_units: m
+        on_exceed: throttle  # throttle or error (default=throttle)
+
     admin: false  # whether to enable the Admin API
 
+    # optional configuration to specify a different set of templates for HTML pages. Recommend using absolute paths. Omit this to use the default provided templates
+    # This property can also be defined at the resource level to override global server settings for specific datasets
     templates: # optional configuration to specify a different set of templates for HTML pages. Recommend using absolute paths. Omit this to use the default provided templates
       path: /path/to/jinja2/templates/folder # path to templates folder containing the Jinja2 template HTML files
       static: /path/to/static/folder # path to static folder containing css, js, images and other static files referenced by the template
 
     map:  # leaflet map setup for HTML pages
-        url: https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}.png
-        attribution: '<a href="https://wikimediafoundation.org/wiki/Maps_Terms_of_Use">Wikimedia maps</a> | Map data &copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap contributors</a>'
+        url: https://tile.openstreetmap.org/{z}/{x}/{y}.png
+        attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap contributors</a>'
     ogc_schemas_location: /opt/schemas.opengis.net  # local copy of https://schemas.opengis.net
 
     manager:  # optional OGC API - Processes asynchronous job management
@@ -83,8 +93,8 @@ The ``logging`` section provides directives for logging messages which are usefu
   logging:
       level: ERROR  # the logging level (see https://docs.python.org/3/library/logging.html#logging-levels)
       logfile: /path/to/pygeoapi.log  # the full file path to the logfile
-      logformat: # example for miliseconds:'[%(asctime)s.%(msecs)03d] {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s'
-      dateformat: # example for miliseconds:'%Y-%m-%dT%H:%M:%S'
+      logformat: # example for milliseconds:'[%(asctime)s.%(msecs)03d] {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s'
+      dateformat: # example for milliseconds:'%Y-%m-%dT%H:%M:%S'
 
 .. note::
    If ``level`` is defined and ``logfile`` is undefined, logging messages are output to the server's ``stdout``.
@@ -129,7 +139,7 @@ The ``metadata`` section provides settings for overall service metadata and desc
               - api
           keywords_type: theme  # keyword type as per the ISO 19115 MD_KeywordTypeCode codelist. Accepted values are discipline, temporal, place, theme, stratum
           terms_of_service: https://creativecommons.org/licenses/by/4.0/  # terms of service
-          url: http://example.org  # informative URL about the service
+          url: https://example.org  # informative URL about the service
       license:  # licensing details
           name: CC-BY 4.0 license
           url: https://creativecommons.org/licenses/by/4.0/
@@ -187,7 +197,6 @@ default.
               - observations
               - monitoring
           linked-data: # linked data configuration (see Linked Data section)
-              item_template: tests/data/base.jsonld
               context:
                   - datetime: https://schema.org/DateTime
                   - vocab: https://example.com/vocab#
@@ -206,6 +215,7 @@ default.
               temporal:  # optional
                   begin: 2000-10-30T18:24:39Z  # start datetime in RFC3339
                   end: 2007-10-30T08:57:29Z  # end datetime in RFC3339
+                  trs: http://www.opengis.net/def/uom/ISO-8601/0/Gregorian  # TRS
           providers:  # list of 1..n required connections information
               # provider name
               # see pygeoapi.plugin for supported providers
@@ -240,7 +250,7 @@ default.
                     option_name: option_value
 
       hello-world:  # name of process
-          type: collection  # REQUIRED (collection, process, or stac-collection)
+          type: process  # REQUIRED (collection, process, or stac-collection)
           processor:
               name: HelloWorld  # Python path of process definition
 
@@ -250,6 +260,41 @@ default.
 
 .. seealso::
    :ref:`plugins` for more information on plugins
+
+Using environment variables
+---------------------------
+
+pygeoapi configuration supports using system environment variables, which can be helpful
+for deploying into `12 factor <https://12factor.net/>`_ environments for example.
+
+Below is an example of how to integrate system environment variables in pygeoapi.
+
+.. code-block:: yaml
+
+   server:
+       bind:
+           host: ${MY_HOST}
+           port: ${MY_PORT}
+
+Multiple environment variables are supported as follows:
+
+.. code-block:: yaml
+
+   data: ${MY_HOST}:${MY_PORT}
+
+It is also possible to define a default value for a variable in case it does not exist in
+the environment using a syntax like: ``value: ${ENV_VAR:-the default}``
+
+.. code-block:: yaml
+
+   server:
+       bind:
+           host: ${MY_HOST:-localhost}
+           port: ${MY_PORT:-5000}
+   metadata:
+       identification:
+           title:
+               en: This is pygeoapi host ${MY_HOST} and port ${MY_PORT:-5000}, nice to meet you!
 
 Adding links to collections
 ---------------------------
@@ -386,33 +431,6 @@ If omitted, no header will be added. Common names for this header are ``API-Vers
 Note that pygeoapi already adds a ``X-Powered-By`` header by default that includes the software version number.
 
 
-Validating the configuration
-----------------------------
-
-To ensure your configuration is valid, pygeoapi provides a validation
-utility that can be run as follows:
-
-.. code-block:: bash
-
-   pygeoapi config validate -c /path/to/my-pygeoapi-config.yml
-
-
-Using environment variables
----------------------------
-
-pygeoapi configuration supports using system environment variables, which can be helpful
-for deploying into `12 factor <https://12factor.net/>`_ environments for example.
-
-Below is an example of how to integrate system environment variables in pygeoapi.
-
-.. code-block:: yaml
-
-   server:
-       bind:
-           host: ${MY_HOST}
-           port: ${MY_PORT}
-
-
 Hierarchical collections
 ------------------------
 
@@ -484,6 +502,36 @@ Examples:
   curl https://example.org/collections/lakes/items  # only the name attribute is returned in properties
   curl https://example.org/collections/lakes/items/{item_id}  # only the name attribute is returned in properties
 
+Limiting data responses
+-----------------------
+
+pygeoapi defines a ``limits`` configuration parameter that will allow a user to define default and maximum limits for multiple data types. This parameter is defined at the server level (``server.limits``) with the ability to override at resource level (``resources[*].limits``). An example of this setting is shown below:
+
+.. code-block:: yaml
+
+   limits:
+       default_items: 10  # applies to vector data
+       max_items: 500  # applies to vector data
+       max_distance_x: 123  # applies to all datasets
+       max_distance_y: 456 # applies to all datasets
+       max_distance_units: m  # as per UCUM https://ucum.org/ucum#section-Tables-of-Terminal-Symbols
+       on_exceed: error  # one of error, throttle
+
+The ``limits`` setting is applied as follows:
+
+- can be defined at both the server and resources levels, with resource limits overriding server wide limits settings
+- ``on_exceed`` can be set to ``error`` or ``throttle`` (default).  If a client specified limit exceeds those set by the server:
+  - when set to ``error``, an exception is returned
+  - when set to ``throttle`` the maximum data allowed by the collection/server/provider is returned
+
+Vector data (features, records)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+- when a limit not specified by the client, ``limits.default_items`` can be used to set the result set size
+- when a limit is specified by the client, the minimum of the ``limit`` parameter and ``limits.max_items`` is calculated to set the result set size
+
+Raster data (coverages, environmental data retrieval)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+- when a bbox or spatial subset is specified by the client, ``limits.max_distance_x``, ``limits.max_distance_y`` and ``limits.max_distance_units`` are used to determine whether a request has asked for more data than the collection is configured to provide and respond accordingly (via ``on_exceed``)
 
 Linked Data
 -----------
@@ -597,23 +645,30 @@ This relationship can further be maintained in the JSON-LD structured data using
             ssn: "http://www.w3.org/ns/ssn/"
             Datastream: sosa:isMemberOf
 
-Sometimes, the JSON-LD desired for an individual feature in a collection is more complicated than can be achieved by
-aliasing properties using a context. In this case, it is possible to specify a Jinja2 template. When ``item_template``
-is defined for a feature collection, the json-ld prepared by pygeoapi will be used to render the Jinja2 template
-specified by the path. The path specified can be absolute or relative to pygeoapi's template folder. For even more
-deployment flexibility, the path can be specified with string interpolation of environment variables.
+Sometimes, the JSON-LD desired for an individual feature in a collection is more complicated than can
+be achieved by aliasing properties using a context. In this case, it is possible to implement a custom 
+Jinja2 template. GeoJSON-LD is rendered using the Jinja2 templates defined in ``collections/items/item.jsonld``
+and ``collections/items/index.jsonld``. A pygeoapi collection requiring custom GeoJSON-LD can overwrite these
+templates using dataset level templating. To learn more about Jinja2 templates, see :ref:`html-templating`.
 
 
 .. code-block:: yaml
 
     linked-data:
-      item_template: tests/data/base.jsonld
       context:
         - datetime: https://schema.org/DateTime
 
-.. note::
-   The template ``tests/data/base.jsonld`` renders the unmodified JSON-LD. For more information on the capacities
-   of Jinja2 templates, see :ref:`html-templating`.
+
+Validating the configuration
+----------------------------
+
+To ensure your configuration is valid, pygeoapi provides a validation
+utility that can be run as follows:
+
+.. code-block:: bash
+
+   pygeoapi config validate -c /path/to/my-pygeoapi-config.yml
+
 
 Summary
 -------
@@ -625,5 +680,5 @@ At this point, you have the configuration ready to administer the server.
 .. _`JSON-LD`: https://json-ld.org
 .. _`Google Structured Data Testing Tool`: https://search.google.com/structured-data/testing-tool#url=https%3A%2F%2Fdemo.pygeoapi.io%2Fmaster
 .. _`Google Dataset Search`: https://developers.google.com/search/docs/appearance/structured-data/dataset
-.. _RotatingFileHandler: http://docs.python.org/3/library/logging.handlers.html#rotatingfilehandler
-.. _TimedRotatingFileHandler: http://docs.python.org/3/library/logging.handlers.html#timedrotatingfilehandler
+.. _RotatingFileHandler: https://docs.python.org/3/library/logging.handlers.html#rotatingfilehandler
+.. _TimedRotatingFileHandler: https://docs.python.org/3/library/logging.handlers.html#timedrotatingfilehandler

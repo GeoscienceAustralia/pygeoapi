@@ -11,6 +11,13 @@ Requirements and dependencies
 
 pygeoapi runs on Python 3.
 
+.. note::
+
+   The exact Python version requirements are aligned with the version of Python on the pygeoapi supported Ubuntu
+   operating system version.  For example, as of 2024-07, the supported version of Python is bound to Ubuntu 22.04
+   (Jammy) which supports Python 3.10.  Ensure you have a Python version that is compatible with the current Ubuntu
+   version that is specified in pygeoapi's `Dockerfile`_.
+
 Core dependencies are included as part of a given pygeoapi installation procedure.  More specific requirements
 details are described below depending on the platform.
 
@@ -32,7 +39,7 @@ For developers and the truly impatient
    vi example-config.yml  # edit as required
    export PYGEOAPI_CONFIG=example-config.yml
    export PYGEOAPI_OPENAPI=example-openapi.yml
-   pygeoapi openapi generate $PYGEOAPI_CONFIG > $PYGEOAPI_OPENAPI
+   pygeoapi openapi generate $PYGEOAPI_CONFIG --output-file $PYGEOAPI_OPENAPI
    pygeoapi serve
    curl http://localhost:5000
 
@@ -52,7 +59,7 @@ Docker
 Using DockerHub
 ^^^^^^^^^^^^^^^
 
-`Docker image`_
+`DockerHub image`_
 
 .. code-block:: bash
 
@@ -61,7 +68,7 @@ Using DockerHub
 Using GitHub Container Registry   
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-`Docker image`_
+`GCHR image`_
 
 .. code-block:: bash
 
@@ -141,4 +148,6 @@ Congratulations!  Whichever of the abovementioned methods you chose, you have su
 onto your system.
 
 
-.. _`Docker image`: https://github.com/geopython/pygeoapi/pkgs/container/pygeoapi
+.. _`DockerHub image`: https://hub.docker.com/r/geopython/pygeoapi
+.. _`GCHR image`: https://github.com/geopython/pygeoapi/pkgs/container/pygeoapi
+.. _`Dockerfile`: https://github.com/geopython/pygeoapi/blob/master/Dockerfile

@@ -21,16 +21,19 @@ parameters.
 
    `CSV`_,✅/✅,results/hits,❌,❌,❌,✅,❌,❌,✅
    `Elasticsearch`_,✅/✅,results/hits,✅,✅,✅,✅,✅,✅,✅
-   `ERDDAP Tabledap Service`_,❌/❌,results/hits,✅,✅,❌,❌,❌,❌
+   `ERDDAP Tabledap Service`_,❌/❌,results/hits,✅,✅,❌,❌,❌,❌,✅
    `ESRI Feature Service`_,✅/✅,results/hits,✅,✅,✅,✅,❌,❌,✅
    `GeoJSON`_,✅/✅,results/hits,❌,❌,❌,✅,❌,❌,✅
    `MongoDB`_,✅/❌,results,✅,✅,✅,✅,❌,❌,✅
    `OGR`_,✅/❌,results/hits,✅,❌,❌,✅,❌,❌,✅
+   `OpenSearch`_,✅/✅,results/hits,✅,✅,✅,✅,✅,✅,✅
    `Oracle`_,✅/✅,results/hits,✅,❌,✅,✅,❌,❌,✅
-   `PostgreSQL`_,✅/✅,results/hits,✅,✅,✅,✅,✅,❌,✅
+   `Parquet`_,✅/✅,results/hits,✅,✅,❌,✅,❌,❌,✅
+   `PostgreSQL`_,✅/✅,results/hits,✅,✅,✅,✅,✅,✅,✅
    `SQLiteGPKG`_,✅/❌,results/hits,✅,❌,❌,✅,❌,❌,✅
-   `SensorThings API`_,✅/✅,results/hits,✅,✅,✅,✅,❌,❌,✅
+   `SensorThings API`_,✅/✅,results/hits,✅,✅,✅,✅,❌,✅,✅
    `Socrata`_,✅/✅,results/hits,✅,✅,✅,✅,❌,❌,✅
+   `TinyDB`_,✅/✅,results/hits,✅,✅,✅,✅,❌,✅,✅
 
 .. note::
 
@@ -69,20 +72,6 @@ definition.
              - http://www.opengis.net/def/crs/OGC/1.3/CRS84
              - http://www.opengis.net/def/crs/EPSG/0/4326
          storage_crs: http://www.opengis.net/def/crs/EPSG/0/28992
-
-
-GeoJSON
-^^^^^^^
-
-To publish a GeoJSON file, the file must be a valid GeoJSON FeatureCollection.
-
-.. code-block:: yaml
-
-   providers:
-       - type: feature
-         name: GeoJSON
-         data: tests/data/file.json
-         id_field: id
 
 .. _Elasticsearch:
 
@@ -125,15 +114,43 @@ The ES provider also has the support for the CQL queries as indicated in the tab
 .. seealso::
   :ref:`cql` for more details on how to use Common Query Language (CQL) to filter the collection with specific queries.
 
+.. _ERDDAP Tabledap Service:
+
+ERDDAP Tabledap Service
+^^^^^^^^^^^^^^^^^^^^^^^
+
+.. note::
+   Requires Python package `requests`_
+
+To publish from an ERDDAP `Tabledap`_ service, the following are required in your index:
+
+.. code-block:: yaml
+
+   providers:
+       - type: feature
+         name: ERDDAPTabledap
+         data: http://osmc.noaa.gov/erddap/tabledap/OSMC_Points
+         id_field: PLATFORM_CODE
+         time_field: time
+         options:
+             filters: "&parameter=\"SLP\"&platform!=\"C-MAN%20WEATHER%20STATIONS\"&platform!=\"TIDE GAUGE STATIONS (GENERIC)\""
+             max_age_hours: 12
+
+.. note::
+   If the ``datetime`` parameter is passed by the client, this overrides the ``options.max_age_hours`` setting.
 
 ESRI Feature Service
 ^^^^^^^^^^^^^^^^^^^^
 
-To publish an `ESRI Feature Service`_ or `ESRI Map Service`_ specify the URL for the service layer in the ``data`` field.
+To publish an ESRI `Feature Service`_ or `Map Service`_ specify the URL for the service layer in the ``data`` field.
 
 * ``id_field`` will often be ``OBJECTID``, ``objectid``, or ``FID``.
 * If the map or feature service is not shared publicly, the ``username`` and ``password`` fields can be set in the
-  configuration to authenticate into the service.
+  configuration to authenticate to the service.
+* If the map or feature service is self-hosted and not shared publicly, the ``token_service`` and optional ``referer`` fields
+  can be set in the configuration to authenticate to the service.
+
+To publish from an ArcGIS online hosted service:
 
 .. code-block:: yaml
 
@@ -146,7 +163,64 @@ To publish an `ESRI Feature Service`_ or `ESRI Map Service`_ specify the URL for
          crs: 4326 # Optional crs (default is EPSG:4326)
          username: username # Optional ArcGIS username
          password: password # Optional ArcGIS password
+         token_service: https://your.server.com/arcgis/sharing/rest/generateToken  # optional URL to your generateToken service
+         referer: https://your.server.com  # optional referer, defaults to https://www.arcgis.com if not set
 
+To publish from a self-hosted service that is not publicly accessible, the ``token_service`` field is required:
+
+.. code-block:: yaml
+
+   providers:
+       - type: feature
+         name: ESRI
+         data: https://your.server.com/arcgis/rest/services/your-layer/MapServer/0
+         id_field: objectid
+         time_field: date_in_your_device_time_zone # Optional time field
+         crs: 4326 # Optional crs (default is EPSG:4326)
+         username: username # Optional ArcGIS username
+         password: password # Optional ArcGIS password
+         token_service: https://your.server.com/arcgis/sharing/rest/generateToken # Optional url to your generateToken service
+         referer: https://your.server.com # Optional referer, defaults to https://www.arcgis.com if not set
+
+GeoJSON
+^^^^^^^
+
+To publish a GeoJSON file, the file must be a valid GeoJSON FeatureCollection.
+
+.. code-block:: yaml
+
+   providers:
+       - type: feature
+         name: GeoJSON
+         data: tests/data/file.json
+         id_field: id
+
+MongoDB
+^^^^^^^
+
+.. note::
+   Requires Python package pymongo
+
+.. note::
+   Mongo 5 or greater is supported.
+
+MongoDB (`website <https://www.mongodb.com/>`_) is a powerful and versatile NoSQL database that provides numerous advantages, making it a preferred choice for many applications. One of the main reasons to use MongoDB is its ability to handle large volumes of unstructured data, making it ideal for managing diverse data types such as text, geospatial, and multimedia data. Additionally, MongoDB's flexible document model allows for easy schema evolution, enabling developers to iterate quickly and adapt to changing requirements.
+
+`MongoDB GeoJSON <https://www.mongodb.com/docs/manual/reference/geojson/>`_ support is available, thus a GeoJSON file can be added to MongoDB using following command
+
+`mongoimport --db test -c points --file "path/to/file.geojson" --jsonArray`
+
+Here `test` is the name of database , `points` is the target collection name.
+
+* each document must be a GeoJSON Feature, with a valid geometry.
+
+.. code-block:: yaml
+
+   providers:
+       - type: feature
+         name: MongoDB
+         data: mongodb://localhost:27017/testdb
+         collection: testplaces
 
 OGR
 ^^^
@@ -249,33 +323,43 @@ The OGR provider requires a recent (3+) version of GDAL to be installed.
    The `crs` query parameter is used as follows:
    e.g. ``http://localhost:5000/collections/foo/items?crs=http%3A%2F%2Fwww.opengis.net%2Fdef%2Fcrs%2FEPSG%2F0%2F28992``.
 
+.. _OpenSearch:
 
-MongoDB
-^^^^^^^
-
-.. note::
-   Requires Python package pymongo
+OpenSearch
+^^^^^^^^^^
 
 .. note::
-   Mongo 5 or greater is supported.
+   Requires Python package opensearch-py
 
-`MongoDB <https://www.mongodb.com/>`_ is a powerful and versatile NoSQL database that provides numerous advantages, making it a preferred choice for many applications. One of the main reasons to use MongoDB is its ability to handle large volumes of unstructured data, making it ideal for managing diverse data types such as text, geospatial, and multimedia data. Additionally, MongoDB's flexible document model allows for easy schema evolution, enabling developers to iterate quickly and adapt to changing requirements.
+To publish an OpenSearch index, the following are required in your index:
 
-`GeoJSON <https://www.mongodb.com/docs/manual/reference/geojson/>`_ support is available officially by MongoDB , thus a GeoJSON file can be added to MongoDB using following command
-
-`mongoimport --db test -c points --file "path/to/file.geojson" --jsonArray`
-
-Here `test` is the name of database , `points` is the target collection name.
-
-* each document must be a GeoJSON Feature, with a valid geometry.
+* indexes must be documents of valid GeoJSON Features
+* index mappings must define the GeoJSON ``geometry`` as a ``geo_shape``
 
 .. code-block:: yaml
 
    providers:
        - type: feature
-         name: MongoDB
-         data: mongodb://localhost:27017/testdb
-         collection: testplaces
+         name: OpenSearch
+         editable: true|false  # optional, default is false
+         data: http://localhost:9200/ne_110m_populated_places_simple
+         id_field: geonameid
+         time_field: datetimefield
+
+.. note::
+
+   For OpenSearch indexes that are password protect, a RFC1738 URL can be used as follows:
+
+   ``data: http://username:password@localhost:9200/ne_110m_populated_places_simple``
+
+   To further conceal authentication credentials, environment variables can be used:
+
+   ``data: http://${MY_USERNAME}:${MY_PASSWORD}@localhost:9200/ne_110m_populated_places_simple``
+
+The OpenSearch provider also has the support for the CQL queries as indicated in the table above.
+
+.. seealso::
+  :ref:`cql` for more details on how to use Common Query Language (CQL) to filter the collection with specific queries.
 
 .. _Oracle:
 
@@ -357,19 +441,92 @@ Mandatory properties
         table: lakes
         geom_field: geometry
         title_field: name
-        manadory_properties:
+        mandatory_properties:
         - example_group_id
 
 On large tables it could be useful to disallow a query on the complete dataset. For this reason it is possible to 
-configure mandatory properties. When this is activated, the provoder throws an exception when the parameter
+configure mandatory properties. When this is activated, the provider throws an exception when the parameter
 is not in the query uri.
+
+Extra properties
+""""""""""""""""
+.. code-block:: yaml
+
+  providers:
+      - type: feature
+        name: OracleDB
+        data:
+            host: 127.0.0.1
+            port: 1521
+            service_name: XEPDB1
+            user: geo_test
+            password: geo_test
+        id_field: id
+        table: lakes
+        geom_field: geometry
+        title_field: name
+        extra_properties:
+        - "'Here we have ' || name AS tooltip"
+
+Extra properties is a list of strings which are added as fields for data retrieval in the SELECT clauses. They
+can be used to return expressions computed by the database.
+
+Session Pooling
+"""""""""""""""
+
+Configured using environment variables.
+
+.. code-block:: bash
+
+   export ORACLE_POOL_MIN=2
+   export ORACLE_POOL_MAX=10
+
+
+The ``ORACLE_POOL_MIN`` and ``ORACLE_POOL_MAX`` environment variables are used to trigger session pool creation in the Oracle Provider and the ``DatabaseConnection`` class. Supports auth via user + password or wallet. For an example of the configuration see above at Oracle - Connection. See https://python-oracledb.readthedocs.io/en/latest/api_manual/module.html#oracledb.create_pool for documentation of the ``create_pool`` function.
+
+If none or only one of the environment variables is set, session pooling will not be activated and standalone connections are established at every request.
+
 
 Custom SQL Manipulator Plugin
 """""""""""""""""""""""""""""
 The provider supports a SQL-Manipulator-Plugin class. With this, the SQL statement could be manipulated. This is
 useful e.g. for authorization at row level or manipulation of the explain plan with hints. 
 
-An example an more informations about that feature you can find in the test class in tests/test_oracle_provider.py.
+An example an more information about that feature you can find in the test class in tests/test_oracle_provider.py.
+
+.. _Parquet:
+
+Parquet
+^^^^^^^
+
+.. note::
+   Requires Python package pyarrow
+
+To publish a GeoParquet file (with a geometry column) the geopandas package is also required.
+
+.. note::
+   Reading data directly from a public s3 bucket is also supported.
+
+.. code-block:: yaml
+
+   providers:
+      - type: feature
+        name: Parquet
+        data: 
+          source: ./tests/data/parquet/random.parquet
+        id_field: id
+        time_field: time
+        x_field:
+          - minlon
+          - maxlon
+        y_field: 
+          - minlat
+          - maxlat
+
+For GeoParquet data, the `x_field` and `y_field` must be specified in the provider definition,
+and they must be arrays of two column names that contain the x and y coordinates of the
+bounding box of each geometry. If the geometries in the data are all points, the `x_field` and `y_field`
+can be strings instead of arrays and refer to a single column each.
 
 .. _PostgreSQL:
 
@@ -464,7 +621,7 @@ SQLiteGPKG
 ^^^^^^^^^^
 
 .. note::
-   Requries Spatialite installation
+   Requires Spatialite installation
 
 SQLite file:
 
@@ -510,6 +667,10 @@ If ``intralink`` is true for an adjacent STA provider collection within a
 pygeoapi instance, the expanded entity is instead represented by an intra-pygeoapi
 link to the other entity or it's ``uri_field`` if declared.
 
+Additionally there is the optional field ``expand``. This field will overwrite the default
+pygeoapi expand behavior and instead implement the configured expand strategy. This is
+particularly useful if you have Datastreams with many observations.
+
 .. code-block:: yaml
 
    providers:
@@ -520,6 +681,7 @@ link to the other entity or it's ``uri_field`` if declared.
          entity: Datastreams
          time_field: phenomenonTime
          intralink: true
+         expand: Thing/Locations,Observations($select=result,phenomenonTime;$orderby=phenomenonTime desc;$top=1)
 
 If all three entities are configured, the STA provider will represent a complete STA
 endpoint as OGC-API feature collections. The ``Things`` features will include links
@@ -554,31 +716,25 @@ To publish a `Socrata Open Data API (SODA)`_ endpoint, pygeoapi heavily relies o
          token: my_token # Optional app token
 
 
-.. _ERDDAP Tabledap Service:
-
-ERDDAP Tabledap Service
-^^^^^^^^^^^^^^^^^^^^^^^
+TinyDB
+^^^^^^
 
 .. note::
-   Requires Python package `requests`_
+   Requires Python package tinydb
 
-To publish from an ERDDAP `Tabledap`_ service, the following are required in your index:
+To publish a TinyDB (`see website <https://tinydb.readthedocs.io>`_) index, the following are required in your index:
+
+* indexes must be documents of valid GeoJSON Features
 
 .. code-block:: yaml
 
    providers:
        - type: feature
-         name: ERDDAPTabledap
-         data: http://osmc.noaa.gov/erddap/tabledap/OSMC_Points
-         id_field: PLATFORM_CODE
-         time_field: time
-         options:
-             filters: "&parameter=\"SLP\"&platform!=\"C-MAN%20WEATHER%20STATIONS\"&platform!=\"TIDE GAUGE STATIONS (GENERIC)\""
-             max_age_hours: 12
-
-
-.. note::
-   If the ``datetime`` parameter is passed by the client, this overrides the ``options.max_age_hours`` setting.
+         editable: true|false  # optional, default is false
+         name: TinyDB
+         data: /path/to/file.db
+         id_field: identifier
+         time_field: datetimefield
 
 Controlling the order of properties
 -----------------------------------
@@ -597,36 +753,52 @@ Data access examples
 --------------------
 
 * list all collections
+
   * http://localhost:5000/collections
 * overview of dataset
+
   * http://localhost:5000/collections/foo
 * queryables
+
   * http://localhost:5000/collections/foo/queryables
 * browse features
+
   * http://localhost:5000/collections/foo/items
 * paging
+
   * http://localhost:5000/collections/foo/items?offset=10&limit=10
 * CSV outputs
+
   * http://localhost:5000/collections/foo/items?f=csv
 * query features (spatial)
+
   * http://localhost:5000/collections/foo/items?bbox=-180,-90,180,90
 * query features (spatial with bbox-crs)
+
   * http://localhost:5000/collections/foo/items?bbox=120000,450000,130000,460000&bbox-crs=http%3A%2F%2Fwww.opengis.net%2Fdef%2Fcrs%2FEPSG%2F0%2F28992
 * query features (attribute)
+
   * http://localhost:5000/collections/foo/items?propertyname=foo
 * query features (temporal)
+
   * http://localhost:5000/collections/foo/items?datetime=2020-04-10T14:11:00Z
 * query features (temporal) and sort ascending by a property (if no +/- indicated, + is assumed)
+
   * http://localhost:5000/collections/foo/items?datetime=2020-04-10T14:11:00Z&sortby=+datetime
 * query features (temporal) and sort descending by a property
+
   * http://localhost:5000/collections/foo/items?datetime=2020-04-10T14:11:00Z&sortby=-datetime
 * query features in a given (and supported) CRS
+
   * http://localhost:5000/collections/foo/items?crs=http%3A%2F%2Fwww.opengis.net%2Fdef%2Fcrs%2FEPSG%2F0%2F32633
 * query features in a given bounding BBOX and return in given CRS
+
   * http://localhost:5000/collections/foo/items?bbox=120000,450000,130000,460000&bbox-crs=http%3A%2F%2Fwww.opengis.net%2Fdef%2Fcrs%2FEPSG%2F0%2F28992&crs=http%3A%2F%2Fwww.opengis.net%2Fdef%2Fcrs%2FEPSG%2F0%2F32633
 * fetch a specific feature
+
   * http://localhost:5000/collections/foo/items/123
 * fetch a specific feature in a given (and supported) CRS
+
   * http://localhost:5000/collections/foo/items/123?crs=http%3A%2F%2Fwww.opengis.net%2Fdef%2Fcrs%2FEPSG%2F0%2F32633
 
 .. note::
@@ -643,10 +815,10 @@ Data access examples
    provider `id_field` values support slashes (i.e. ``my/cool/identifier``). The client request would then
    be responsible for encoding the identifier accordingly (i.e. ``http://localhost:5000/collections/foo/items/my%2Fcool%2Fidentifier``)
 
-.. _`ESRI Feature Service`: https://enterprise.arcgis.com/en/server/latest/publish-services/windows/what-is-a-feature-service-.htm
-.. _`ESRI Map Service`: https://enterprise.arcgis.com/en/server/latest/publish-services/windows/what-is-a-map-service.htm
+.. _`Feature Service`: https://enterprise.arcgis.com/en/server/latest/publish-services/windows/what-is-a-feature-service-.htm
+.. _`Map Service`: https://enterprise.arcgis.com/en/server/latest/publish-services/windows/what-is-a-map-service.htm
 .. _`Google Cloud SQL`: https://cloud.google.com/sql
-.. _`OGC API - Features`: https://www.ogc.org/standards/ogcapi-features
+.. _`OGC API - Features`: https://ogcapi.ogc.org/features
 .. _`Socrata Open Data API (SODA)`: https://dev.socrata.com
 .. _`sodapy`: https://github.com/xmunoz/sodapy
 .. _`Tabledap`: https://coastwatch.pfeg.noaa.gov/erddap/tabledap/documentation.html
