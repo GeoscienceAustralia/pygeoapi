@@ -910,6 +910,11 @@ def get_collection_item(api: API, request: APIRequest,
     # locale (or fallback default locale)
     l10n.set_response_language(headers, prv_locale, request.locale)
 
+    # GA customisation - Add PID LinkAdd commentMore actions
+    if collections[dataset]['other']:
+        content['pid'] = f'{collections[dataset]["other"]["href"]}{identifier}'
+    # End GA customisation
+
     if request.format == F_HTML:  # render
         tpl_config = api.get_dataset_templates(dataset)
         content['title'] = l10n.translate(collections[dataset]['title'],
