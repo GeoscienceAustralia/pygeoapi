@@ -16,3 +16,4 @@ requests
 shapely
 SQLAlchemy
 tinydb
+oracledb==2.2.0
