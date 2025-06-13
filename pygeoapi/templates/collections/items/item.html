@@ -42,10 +42,10 @@
     <section id="item">
       <div class="row">
         <div class="col-sm">
-          <!-- GA customisation ptitle to ID
-          <h1>{{ ptitle }}</h1> -->
+          {# GA customisation ptitle to ID
+          <h1>{{ ptitle }}</h1> #}
           <h1>{{ data['id'] }}</h1>
-        <!-- GA customisation PID link -->
+        {# GA customisation PID link #}
 	      <div>Persistent Identifier: <a href="{{ data['pid'] }}"> {{ data['pid'] }} </a></div>  
         </div>
       </div>
@@ -109,7 +109,7 @@
                       {% if l['href'] %}
                         <li><a href="{{ l['href'] }}" title="{{ l['title'] or l['href'].split('/') }}">{{ l['title'] or (l['href'].split('/') | last) | truncate( 25 ) }}</a>
                         {% if l['type'] %}
-                          <!-- Start GA customisation renaming collection/prev/next link -->
+                          {# Start GA customisation renaming collection/prev/next link #}
                           {% if l['rel'] == 'collection' %}
                             (text/html)
                           {% elif l['rel'] == 'next' %}
@@ -119,7 +119,7 @@
                           {% else %}
                             ({{ l['type'] }})
                           {% endif %}
-                          <!-- End GA customisation --> 
+                          {# End GA customisation #} 
                         {% endif %}
                         </li>
                       {% endif %}
