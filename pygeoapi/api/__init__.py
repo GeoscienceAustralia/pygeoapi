@@ -1419,7 +1419,10 @@ def get_collection_schema(api: API, request: Union[APIRequest, Any],
     if p.type != 'coverage':
         schema['properties']['geometry'] = {
             'format': 'geometry-any',
-            'x-ogc-role': 'primary-geometry'
+            'x-ogc-role': 'primary-geometry',
+            #GA Customisation - Add $ref link to ensure geojson definition is accessible. 
+            #To be reviewed when upgrading beyond version 0.20.0
+            '$ref': 'https://geojson.org/schema/Geometry.json'
         }
 
     for k, v in p.fields.items():
