@@ -40,7 +40,7 @@
               </div>
           </div>
         {% endif %}
-        <!-- GA Customisation - Remove URL
+        {# GA Customisation - Remove URL
           <div class="row">
               <div class="col-sm-4">
                 {% trans %}URL{% endtrans %}
@@ -50,7 +50,7 @@
                     {{ config['metadata']['identification']['url'] | truncate( 70 ) }}</a>
               </div>
           </div>
-        -->
+        #}
       </div>
     </div>
   </section>
@@ -70,7 +70,7 @@
     </p>
   </section>
  {% endif %}
- <!-- GA customisation disable Processes and Jobs
+ {# GA customisation disable Processes and Jobs
  {% if data['processes'] %}
   <section id="processes">
       <h2>{% trans %}Processes{% endtrans %}</h2>
@@ -84,7 +84,7 @@
         <a title="Browse jobs" href="{{config.server.url}}/jobs">{% trans %}Browse jobs{% endtrans %}</a>
       </p>
   </section>
- {% endif %} -->
+ {% endif %} #}
   <section id="openapi">
       <h2>{% trans %}API Definition{% endtrans %}</h2>
       <p>
@@ -100,7 +100,7 @@
         <a href="https://github.com/GeoscienceAustralia/pygeoapi" target="_blank">ga-pygeoapi</a>
     </p>
   </section>
-  <!-- GA customisation disable Conformance and Tile Matrix Sets
+  {# GA customisation disable Conformance and Tile Matrix Sets
   <section id="conformance">
       <h2>{% trans %}Conformance{% endtrans %}</h2>
       <p>
@@ -114,9 +114,9 @@
         <a href="{{ config['server']['url'] }}/TileMatrixSets?f=html">{% trans %}View the Tile Matrix Sets available on this service{% endtrans %}</a>
       </p>
   </section>
-  {% endif %} -->
+  {% endif %} #}
   </div>
-  <!-- GA customisation disable class="card"
+  {# GA customisation disable class="card"
   <div class="col-md-4 col-sm-12">
     <div class="card mb-3">
       <div class="card-header">
@@ -166,7 +166,7 @@
           {% endif %}
         </div>
       </div>
-    </div> -->
+    </div> #}
   </div>
 </div>
 
