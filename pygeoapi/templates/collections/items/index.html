@@ -22,8 +22,8 @@
   <section id="items"></section>
   <section id="collection">
     <h1>{% for l in data['links'] if l.rel == 'collection' %} {{ l['title'] }} {% endfor %}</h1>
-    <!-- GA customisation disable trans
-    <p>{% trans %}Items in this collection{% endtrans %}.</p> -->
+    {# GA customisation disable trans
+    <p>{% trans %}Items in this collection{% endtrans %}.</p> #}
   </section>
   <section id="items">
     {% if data['features'] %}
@@ -36,7 +36,9 @@
           <div class="col-sm-12">
             <div class="row">
                 <div class="col-sm-12">
-                  {% trans %}Warning: Higher limits not recommended!{% endtrans %}
+                    {% if data['numberMatched'] %}
+                    <p>{% trans %}Items in this collection{% endtrans %}: {{ data['numberMatched'] }}</p>
+                    {% endif %}
                 </div>
             </div>
             <div class="row">
@@ -48,6 +50,7 @@
                     <option value="1000">1,000</option>
                     <option value="2000">2,000</option>
                   </select>
+                  <p>{% trans %}Warning: Higher limits not recommended!{% endtrans %}</p>
                   <script>
                     var select = document.getElementById('limits');
                     var defaultValue = select.getElementsByTagName('option')[0].value;
@@ -135,6 +138,12 @@
           </table>
       </div>
     </div>
+    {% elif data['numberMatched'] %}
+    <div class="row">
+      <div class="col-sm-12">
+        <p>{% trans %}Items in this collection{% endtrans %}: {{ data['numberMatched'] }}</p>
+      </div>
+    </div>
     {% else %}
     <div class="row col-sm-12">
         <p>{% trans %}No items{% endtrans %}</p>
@@ -170,6 +179,7 @@
     });
     markers.clearLayers().addLayer(items);
     map.addLayer(markers);
+
     {% else %}
     map.addLayer(items);
     {% endif %}

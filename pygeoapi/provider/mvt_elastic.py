@@ -35,8 +35,9 @@ from pygeoapi.provider.base_mvt import BaseMVTProvider
 from pygeoapi.provider.base import (ProviderConnectionError,
                                     ProviderGenericError,
                                     ProviderInvalidQueryError)
+from pygeoapi.provider.tile import ProviderTileNotFoundError
 from pygeoapi.models.provider.base import (
-    TileSetMetadata, LinkType)
+    TileSetMetadata, TileMatrixSetEnum, LinkType)
 from pygeoapi.util import is_url, url_join
 
 LOGGER = logging.getLogger(__name__)
@@ -119,6 +120,13 @@ class MVTElasticProvider(BaseMVTProvider):
         LOGGER.debug('Removing leading "/"')
         return layer[1:]
 
+    def get_tiling_schemes(self):
+
+        "Only WebMercatorQuad tiling scheme is supported in elastic"
+        return [
+                TileMatrixSetEnum.WEBMERCATORQUAD.value
+            ]
+
     def get_tiles_service(self, baseurl=None, servicepath=None,
                           dirpath=None, tile_type=None):
         """
@@ -166,8 +174,15 @@ class MVTElasticProvider(BaseMVTProvider):
 
             try:
                 with requests.Session() as session:
+                    data = {'fields': ['*']}
                     session.get(base_url)
-                    resp = session.get(f'{base_url}/{layer}/{z}/{y}/{x}{url_query}')  # noqa
+                    resp = session.get(f'{base_url}/{layer}/{z}/{y}/{x}{url_query}', json=data)  # noqa
+
+                    if resp.status_code == 404:
+                        if (self.is_in_limits(TileMatrixSetEnum.WEBMERCATORQUAD.value, z, x, y)): # noqa
+                            return None
+                        raise ProviderTileNotFoundError
+
                     resp.raise_for_status()
                     return resp.content
             except requests.exceptions.RequestException as e:
@@ -224,7 +239,7 @@ class MVTElasticProvider(BaseMVTProvider):
 
                 tiling_scheme = LinkType(href=tiling_scheme_url,
                                          rel="http://www.opengis.net/def/rel/ogc/1.0/tiling-scheme", # noqa
-                                         type=tiling_scheme_url_type,
+                                         type_=tiling_scheme_url_type,
                                          title=tiling_scheme_url_title)
 
         if tiling_scheme is None:
@@ -240,7 +255,7 @@ class MVTElasticProvider(BaseMVTProvider):
         service_url_link_type = "application/vnd.mapbox-vector-tile"
         service_url_link_title = f'{tileset} vector tiles for {layer}'
         service_url_link = LinkType(href=service_url, rel="item",
-                                    type=service_url_link_type,
+                                    type_=service_url_link_type,
                                     title=service_url_link_title)
 
         links.append(tiling_scheme)
@@ -249,11 +264,3 @@ class MVTElasticProvider(BaseMVTProvider):
         content.links = links
 
         return content.dict(exclude_none=True)
-
-    def get_vendor_metadata(self, dataset, server_url, layer, tileset,
-                            title, description, keywords, **kwargs):
-        """
-        Gets tile metadata in tilejson format
-        """
-        LOGGER.debug("Get tilejson metadata")
-        return ""

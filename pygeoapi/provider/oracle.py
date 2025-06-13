@@ -1,9 +1,10 @@
 # =================================================================
 #
 # Authors: Andreas Kosubek <andreas.kosubek@ama.gv.at>
+# Authors: Moritz Langer <moritz.b.langer@gmail.com>
 #
 # Copyright (c) 2023 Andreas Kosubek
-#
+# Copyright (c) 2024 Moritz Langer
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
 # files (the "Software"), to deal in the Software without
@@ -30,9 +31,12 @@
 import importlib
 import json
 import logging
+import os
+import threading
+from typing import Optional
+
 import oracledb
 import pyproj
-from typing import Optional
 
 from pygeoapi.api import DEFAULT_STORAGE_CRS
 
@@ -54,6 +58,41 @@ class DatabaseConnection:
     """Database connection class to be used as 'with' statement.
     The class returns a connection object.
     """
+    pool = None  # Class-level connection pool
+    lock = threading.Lock()
+
+    @classmethod
+    def create_pool(cls, conn_dict, oracle_pool_min, oracle_pool_max):
+        """Initialize the connection pool for the class
+           Lock is implemented before function call at __init__"""
+        dsn = cls._make_dsn(conn_dict)
+
+        connect_kwargs = {
+            'dsn': dsn,
+            'min': oracle_pool_min,
+            'max': oracle_pool_max,
+            'increment': 1
+        }
+
+        # Create the pool
+        if conn_dict.get("external_auth") == "wallet":
+            # If Auth is via Wallet you need to save a wallet under
+            # the directory returned by this bash command if apache is used
+            # cat /etc/passwd |grep apache
+            # except another directory is specified in the sqlnet.ora file
+            LOGGER.debug("Connection pool from wallet.")
+            connect_kwargs["externalauth"] = True
+            connect_kwargs["homogeneous"] = False
+
+        else:
+            LOGGER.debug("Connection pool from user and password.")
+            connect_kwargs["user"] = conn_dict["user"]
+            connect_kwargs["password"] = conn_dict["password"]
+
+        p = oracledb.create_pool(**connect_kwargs)
+        LOGGER.debug("Connection pool created successfully")
+
+        return p
 
     def __init__(self, conn_dic, table, properties=[], context="query"):
         """
@@ -88,106 +127,137 @@ class DatabaseConnection:
         )
         self.properties = [item.lower() for item in properties]
         self.fields = {}  # Dict of columns. Key is col name, value is type
-        self.conn = None
+        oracle_pool_min = int(os.environ.get('ORACLE_POOL_MIN', 0))
+        oracle_pool_max = int(os.environ.get('ORACLE_POOL_MAX', 0))
+        # Initialize the connection pool if it hasn't been initialized
+        if oracle_pool_min and oracle_pool_max:
+            LOGGER.debug("Found environment variables for session pooling:")
+            LOGGER.debug(f"ORACLE_POOL_MIN: {oracle_pool_min}")
+            LOGGER.debug(f"ORACLE_POOL_MAX: {oracle_pool_max}")
+            with DatabaseConnection.lock:
+                if DatabaseConnection.pool is None:
+                    LOGGER.debug(f"self.conn_dict contains {self.conn_dict}")
+                    DatabaseConnection.pool = DatabaseConnection.create_pool(
+                        self.conn_dict, oracle_pool_min, oracle_pool_max
+                    )
+                    LOGGER.debug(
+                        "Initialized connection pool with "
+                        f"{DatabaseConnection.pool.max} connections"
+                    )
+
+    @staticmethod
+    def _make_dsn(conn_dict):
+        if conn_dict.get("init_oracle_client", False):
+            oracledb.init_oracle_client()
+
+        # Connect with tnsnames.ora entry and Login with Oracle Wallet
+        if conn_dict.get("external_auth") == "wallet":
+            LOGGER.debug(
+                "Oracle connect with tnsnames.ora entry \
+                and login with Oracle Wallet"
+            )
+            if "tns_name" not in conn_dict:
+                raise ProviderConnectionError(
+                    "tns_name must be set for external authentication!"
+                )
+
+            dsn = conn_dict["tns_name"]
+
+        # Connect with SERVICE_NAME
+        if "service_name" in conn_dict:
+            LOGGER.debug(
+                f"Oracle connect with service_name: \
+                    {conn_dict['service_name']}"
+            )
+
+            if "host" not in conn_dict:
+                raise ProviderConnectionError(
+                    "Host must be set for connection with service_name!"
+                )
+
+            dsn = oracledb.makedsn(
+                conn_dict["host"],
+                conn_dict.get("port", 1521),
+                service_name=conn_dict["service_name"],
+            )
+
+        # Connect with SID
+        elif "sid" in conn_dict:
+            LOGGER.debug(
+                f"Oracle connect with sid: {conn_dict['sid']}"
+            )
+
+            if "host" not in conn_dict:
+                raise ProviderConnectionError(
+                    "Host must be set for connection with sid!"
+                )
+
+            dsn = oracledb.makedsn(
+                conn_dict["host"],
+                conn_dict.get("port", 1521),
+                sid=conn_dict["sid"],
+            )
+
+        # Connect with tnsnames.ora entry
+        elif "tns_name" in conn_dict:
+            LOGGER.debug(
+                f"Oracle connect with tns_name: \
+                    {conn_dict['tns_name']}"
+            )
+            dsn = conn_dict["tns_name"]
+
+        else:
+            raise ProviderConnectionError(
+                "One of service_name, sid or tns_name must be specified!"
+            )
+
+        LOGGER.debug(f"Oracle DSN string: {dsn}")
+
+        return dsn
 
     def __enter__(self):
+        """Acquires a connection from the pool."""
         try:
-            if self.conn_dict.get("init_oracle_client", False):
-                oracledb.init_oracle_client()
-
-            # Connect with tnsnames.ora entry and Login with Oracle Wallet
-            if self.conn_dict.get("external_auth") == "wallet":
-                LOGGER.debug(
-                    "Oracle connect with tnsnames.ora entry \
-                    and login with Oracle Wallet"
-                )
-
-                if "tns_name" not in self.conn_dict:
-                    raise ProviderConnectionError(
-                        "tns_name must be set for external authentication!"
-                    )
-
-                dsn = self.conn_dict["tns_name"]
-
-            # Connect with SERVICE_NAME
-            if "service_name" in self.conn_dict:
-                LOGGER.debug(
-                    f"Oracle connect with service_name: \
-                        {self.conn_dict['service_name']}"
-                )
-
-                if "host" not in self.conn_dict:
-                    raise ProviderConnectionError(
-                        "Host must be set for connection with service_name!"
-                    )
-
-                dsn = oracledb.makedsn(
-                    self.conn_dict["host"],
-                    self.conn_dict.get("port", 1521),
-                    service_name=self.conn_dict["service_name"],
-                )
-
-            # Connect with SID
-            elif "sid" in self.conn_dict:
-                LOGGER.debug(
-                    f"Oracle connect with sid: {self.conn_dict['sid']}"
-                )
-
-                if "host" not in self.conn_dict:
-                    raise ProviderConnectionError(
-                        "Host must be set for connection with sid!"
-                    )
-
-                dsn = oracledb.makedsn(
-                    self.conn_dict["host"],
-                    self.conn_dict.get("port", 1521),
-                    sid=self.conn_dict["sid"],
-                )
-
-            # Connect with tnsnames.ora entry
-            elif "tns_name" in self.conn_dict:
-                LOGGER.debug(
-                    f"Oracle connect with tns_name: \
-                        {self.conn_dict['tns_name']}"
-                )
-                dsn = self.conn_dict["tns_name"]
-
+            if DatabaseConnection.pool:
+                self.conn = DatabaseConnection.pool.acquire()
+                LOGGER.debug("Connection acquired from pool .")
+                LOGGER.debug(f"Connection from pool is {self.conn}.")
             else:
-                raise ProviderConnectionError(
-                    "One of service_name, sid or tns_name must be specified!"
-                )
+                dsn = self._make_dsn(self.conn_dict)
+                LOGGER.debug(f"Created dsn for single connection with params: {dsn}")  # noqa
+                # Connect with tnsnames.ora entry and Login with Oracle Wallet  # noqa
+                if self.conn_dict.get("external_auth") == "wallet":
+                    self.conn = oracledb.connect(externalauth=True, dsn=dsn)
 
-            LOGGER.debug(f"Oracle DSN string: {dsn}")
+                # Connect with tnsnames.ora entry,
+                # TNS_ADMIN is set via configuration
+                if "tns_admin" in self.conn_dict:
+                    self.conn = oracledb.connect(
+                        user=self.conn_dict["user"],
+                        password=self.conn_dict["password"],
+                        dsn=dsn,
+                        config_dir=self.conn_dict["tns_admin"],
+                    )
 
-            # Connect with tnsnames.ora entry and Login with Oracle Wallet
-            if self.conn_dict.get("external_auth") == "wallet":
-                self.conn = oracledb.connect(externalauth=True, dsn=dsn)
-
-            # Connect with tnsnames.ora entry,
-            # TNS_ADMIN is set via configuration
-            if "tns_admin" in self.conn_dict:
-                self.conn = oracledb.connect(
-                    user=self.conn_dict["user"],
-                    password=self.conn_dict["password"],
-                    dsn=dsn,
-                    config_dir=self.conn_dict["tns_admin"],
-                )
-
-            # Connect with user / password via dsn string
-            # When dsn is a TNS name, the environment variable TNS_ADMIN must
-            # be set (Path to tnsnames.ora file)
-            else:
-                self.conn = oracledb.connect(
-                    user=self.conn_dict["user"],
-                    password=self.conn_dict["password"],
-                    dsn=dsn,
-                )
+                # Connect with user / password via dsn string
+                # When dsn is a TNS name, the environment variable TNS_ADMIN must   # noqa
+                # be set (Path to tnsnames.ora file)
+                else:
+                    self.conn = oracledb.connect(
+                        user=self.conn_dict["user"],
+                        password=self.conn_dict["password"],
+                        dsn=dsn,
+                    )
 
         except oracledb.DatabaseError as e:
-            LOGGER.error(
-                f"Couldn't connect to Oracle using:{str(self.conn_dict)}"
-            )
-            LOGGER.error(e)
+            if DatabaseConnection.pool:
+                LOGGER.error("Couldn't acquire a connection from the pool.")
+                LOGGER.error(e)
+            else:
+                LOGGER.error(
+                    f"Couldn't connect to Oracle using:{str(self.conn_dict)}"
+                )
+                LOGGER.error(e)
             raise ProviderConnectionError(e)
 
         # Check if table name has schema/owner inside
@@ -204,36 +274,47 @@ class DatabaseConnection:
         LOGGER.debug("Table: " + table)
 
         if self.context == "query":
-            column_list = self._get_table_columns(schema, table)
-
-            # When self.properties is set, then the result would be filtered
-            if self.properties:
-                column_list = [
-                    col
-                    for col in column_list
-                    if col[0].lower()
-                    in [item.lower() for item in self.properties]
-                ]
-
-            # Concatenate column names with ', '
-            self.columns = ", ".join([item[0].lower() for item in column_list])
+            columns = dict(self._get_table_columns(schema, table))
 
             # Populate dictionary for columns with column type
-            for k, v in dict(column_list).items():
+            # NOTE: we want all columns available here because they are
+            #       used for filtering in the where clause, not only
+            #       the ones that are returned to the client.
+            for k, v in columns.items():
                 self.fields[k.lower()] = {"type": v}
+
+            filtered_columns = set(self.fields)
+            if self.properties:
+                filtered_columns &= {k.lower() for k in self.properties}
+
+            # fields which are part of the output
+            self.filtered_fields = {
+                k: v for k, v in self.fields.items() if k in filtered_columns
+            }
 
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # some logic to commit/rollback
-        self.conn.close()
+        """
+        Releases the connection back to the pool.
+        """
+        try:
+            if DatabaseConnection.pool:
+                DatabaseConnection.pool.release(self.conn)
+                LOGGER.debug("Connection released back to pool.")
+            else:
+                self.conn.close()
+                LOGGER.debug("Single Connection closed")
+        except oracledb.DatabaseError as e:
+            LOGGER.error("Error closing the connection.")
+            LOGGER.error(e)
 
     def _get_table_columns(self, schema, table):
         """
         Returns an array with all column names and data types
         from Oracle table ALL_TAB_COLUMNS.
         Lookup for public and private synonyms.
-        Throws ProviderGenericError when table not exist or accesable.
+        Throws ProviderGenericError when table not exist or accessible.
         """
 
         sql = """
@@ -327,6 +408,7 @@ class OracleProvider(BaseProvider):
         self.geom = provider_def["geom_field"]
         self.properties = [item.lower() for item in self.properties]
         self.mandatory_properties = provider_def.get("mandatory_properties")
+        self.extra_properties = provider_def.get("extra_properties", [])
 
         # SQL manipulator properties
         self.sql_manipulator = provider_def.get("sql_manipulator")
@@ -367,12 +449,12 @@ class OracleProvider(BaseProvider):
         """
         LOGGER.debug("Get available fields/properties")
 
-        if not self.fields:
+        if not self._fields:
             with DatabaseConnection(
                 self.conn_dic, self.table, properties=self.properties
             ) as db:
-                self.fields = db.fields
-        return self.fields
+                self._fields = db.fields
+        return self._fields
 
     def _get_where_clauses(
         self,
@@ -496,6 +578,12 @@ class OracleProvider(BaseProvider):
 
         return f"ORDER BY {','.join(ret)}"
 
+    def _get_extra_columns_expression(self):
+        """Returns part of SELECT clause for extra properties"""
+        return "".join(
+            f", {e_prop}" for e_prop in self.extra_properties
+        )
+
     def _output_type_handler(
         self, cursor, name, default_type, size, precision, scale
     ):
@@ -524,6 +612,38 @@ class OracleProvider(BaseProvider):
             srid = crs.to_epsg()
 
         return srid
+
+    def _process_query_with_sql_manipulator_sup(
+        self, db, sql_query, bind_variables, extra_params, **query_args
+    ):
+        """
+        Apply the SQL manipulation plugin to process the SQL query.
+
+        :param db: Database connection instance
+        :param sql_query: The SQL query to process
+        :param bind_variables: Query bind variables
+        :param extra_params: Additional parameters for manipulation
+        :param query_args: Other dynamic arguments required for processing
+        :return: Processed SQL query and bind variables
+        """
+        if self.sql_manipulator:
+            LOGGER.debug(f"sql_manipulator: {self.sql_manipulator}")
+            manipulation_class = _class_factory(self.sql_manipulator)
+
+            # Pass all arguments to the process_query method
+            sql_query, bind_variables = manipulation_class.process_query(
+                db=db,
+                sql_query=sql_query,
+                bind_variables=bind_variables,
+                sql_manipulator_options=self.sql_manipulator_options,
+                **query_args,
+                extra_params=extra_params,
+            )
+
+        for placeholder in ["#HINTS#", "#JOIN#", "#WHERE#"]:
+            sql_query = sql_query.replace(placeholder, "")
+
+        return sql_query, bind_variables
 
     def query(
         self,
@@ -559,6 +679,19 @@ class OracleProvider(BaseProvider):
 
         :returns: GeoJSON FeaturesCollection
         """
+        LOGGER.debug(f"properties contains: {properties}")
+
+        # NOTE: properties contains field keys plus extra params
+        #       need to split them up here
+        filtered_properties = []
+        extra_params = {}
+        for (key, value) in properties:
+            if key in self.fields.keys():
+                filtered_properties.append((key, value))
+            else:
+                extra_params[key] = value
+
+        properties = filtered_properties
 
         # Check mandatory filter properties
         property_dict = dict(properties)
@@ -574,8 +707,6 @@ class OracleProvider(BaseProvider):
                             f"Missing mandatory filter property: {mand_col}"
                         )
 
-        # GA customisation - unindented until Line 755 (pagination)
-        # if resulttype == "hits":
         with DatabaseConnection(
             self.conn_dic,
             self.table,
@@ -596,9 +727,36 @@ class OracleProvider(BaseProvider):
             # because of getFields ...
             sql_query = f"SELECT COUNT(1) AS hits \
                             FROM {self.table} \
-                            {where_dict['clause']}"
+                            {where_dict['clause']} #WHERE#"
+
+            # Assign where_dict["properties"] to bind_variables
+            bind_variables = {**where_dict["properties"]}
+
+            # Default values for the process_query function (sql_manipulator)
+            query_args = {
+                "offset": offset,
+                "limit": limit,
+                "resulttype": resulttype,
+                "bbox": bbox,
+                "datetime_": datetime_,
+                "properties": properties,
+                "sortby": sortby,
+                "skip_geometry": skip_geometry,
+                "select_properties": select_properties,
+                "crs_transform_spec": crs_transform_spec,
+                "q": q,
+                "language": language,
+                "filterq": filterq,
+            }
+
+            # Apply the SQL manipulation plugin
+            extra_params["geom"] = self.geom
+            sql_query, bind_variables = self._process_query_with_sql_manipulator_sup(   # noqa: E501
+                db, sql_query, bind_variables, extra_params, **query_args
+            )
+
             try:
-                cursor.execute(sql_query, where_dict["properties"])
+                cursor.execute(sql_query, bind_variables)
             except oracledb.Error as err:
                 LOGGER.error(
                     f"Error executing sql_query: {sql_query}: {err}"
@@ -607,9 +765,6 @@ class OracleProvider(BaseProvider):
 
             hits = cursor.fetchone()[0]
             LOGGER.debug(f"hits: {str(hits)}")
-
-            # GA customisation - desable the return below (pagination)
-            # return self._response_feature_hits(hits)
 
         with DatabaseConnection(
             self.conn_dic, self.table, properties=self.properties
@@ -621,10 +776,10 @@ class OracleProvider(BaseProvider):
             # Create column list.
             #   Uses columns field that was generated in the Connection class
             #   or the configured columns from the Yaml file.
-            props = (
-                db.columns
-                if select_properties == []
-                else ", ".join([p for p in select_properties])
+            props = ", ".join(
+                select_properties
+                if select_properties
+                else db.filtered_fields
             )
 
             where_dict = self._get_where_clauses(
@@ -659,7 +814,7 @@ class OracleProvider(BaseProvider):
             LOGGER.debug(f"target_srid: {target_srid}")
 
             # Build geometry column call
-            #   When a different output CRS is definded, the geometry
+            #   When a different output CRS is defined, the geometry
             #   geometry column would be transformed.
             if skip_geometry:
                 geom = ""
@@ -682,14 +837,16 @@ class OracleProvider(BaseProvider):
             # SQL manipulation class
             paging_bind = {}
             if limit > 0:
-                sql_query = f"SELECT #HINTS# {props} {geom} \
+                sql_query = f"SELECT #HINTS# {props} \
+                              {self._get_extra_columns_expression()} {geom} \
                               FROM {self.table} t1 #JOIN# \
                               {where_dict['clause']} #WHERE# \
                               {orderby} \
                               OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY"
                 paging_bind = {"offset": offset, "limit": limit}
             else:
-                sql_query = f"SELECT #HINTS# {props} {geom} \
+                sql_query = f"SELECT #HINTS# {props} \
+                        {self._get_extra_columns_expression()} {geom} \
                         FROM {self.table} t1 #JOIN# \
                         {where_dict['clause']} #WHERE# \
                         {orderby}"
@@ -697,35 +854,10 @@ class OracleProvider(BaseProvider):
             # Create dictionary for sql bind variables
             bind_variables = {**where_dict["properties"], **paging_bind}
 
-            # SQL manipulation plugin
-            if self.sql_manipulator:
-                LOGGER.debug("sql_manipulator: " + self.sql_manipulator)
-                manipulation_class = _class_factory(self.sql_manipulator)
-                sql_query, bind_variables = manipulation_class.process_query(
-                    db,
-                    sql_query,
-                    bind_variables,
-                    self.sql_manipulator_options,
-                    offset,
-                    limit,
-                    resulttype,
-                    bbox,
-                    datetime_,
-                    properties,
-                    sortby,
-                    skip_geometry,
-                    select_properties,
-                    crs_transform_spec,
-                    q,
-                    language,
-                    filterq,
-                )
-
-            # Clean up placeholders that aren't used by the
-            # manipulation class.
-            sql_query = sql_query.replace("#HINTS#", "")
-            sql_query = sql_query.replace("#JOIN#", "")
-            sql_query = sql_query.replace("#WHERE#", "")
+            # Apply the SQL manipulation plugin
+            sql_query, bind_variables = self._process_query_with_sql_manipulator_sup(   # noqa: E501
+                db, sql_query, bind_variables, extra_params, **query_args
+            )
 
             LOGGER.debug(f"SQL Query: {sql_query}")
             LOGGER.debug(f"Bind variables: {bind_variables}")
@@ -850,7 +982,7 @@ class OracleProvider(BaseProvider):
             LOGGER.debug(f"target_srid: {target_srid}")
 
             # Build geometry column call
-            #   When a different output CRS is definded, the geometry
+            #   When a different output CRS is defined, the geometry
             #   geometry column would be transformed.
             if source_srid != target_srid:
                 crs_dict = {"target_srid": target_srid}
@@ -862,7 +994,10 @@ class OracleProvider(BaseProvider):
             else:
                 geom_sql = f", t1.{self.geom}.get_geojson() AS geometry "
 
-            sql_query = f"SELECT {db.columns} {geom_sql} \
+            columns = ", ".join(db.filtered_fields)
+            sql_query = f"SELECT {columns} \
+                            {self._get_extra_columns_expression()} \
+                            {geom_sql} \
                             FROM {self.table} t1 \
                            WHERE {self.id_field} = :in_id"
 
@@ -975,15 +1110,13 @@ class OracleProvider(BaseProvider):
             columns = [
                 col
                 for col in columns
-                if col.lower() in [field.lower() for field in self.fields]
+                if col.lower() in db.filtered_fields
             ]
 
-            # Flter function to get only properties who are
+            # Filter function to get only properties who are
             # in the column list
             def filter_binds(pair):
-                return pair[0].lower() in [
-                    field.lower() for field in self.fields
-                ]
+                return pair[0].lower() in db.filtered_fields
 
             # Filter bind variables
             bind_variables = dict(
@@ -1074,15 +1207,13 @@ class OracleProvider(BaseProvider):
             columns = [
                 col
                 for col in columns
-                if col.lower() in [field.lower() for field in self.fields]
+                if col.lower() in db.filtered_fields
             ]
 
-            # Flter function to get only properties who are
+            # Filter function to get only properties who are
             # in the column list
             def filter_binds(pair):
-                return pair[0].lower() in [
-                    field.lower() for field in self.fields
-                ]
+                return pair[0].lower() in db.filtered_fields
 
             # Filter bind variables
             bind_variables = dict(

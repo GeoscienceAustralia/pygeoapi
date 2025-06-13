@@ -30,6 +30,7 @@
 from numpy import float64, int64
 
 import pytest
+import xarray as xr
 
 from pygeoapi.provider.xarray_ import XarrayProvider
 from pygeoapi.util import json_serial
@@ -53,6 +54,20 @@ def config():
     }
 
 
+@pytest.fixture()
+def config_no_time(tmp_path):
+    ds = xr.open_zarr(path)
+    ds = ds.sel(time=ds.time[0])
+    ds = ds.drop_vars('time')
+    ds.to_zarr(tmp_path / 'no_time.zarr')
+    return {
+        'name': 'zarr',
+        'type': 'coverage',
+        'data': str(tmp_path / 'no_time.zarr'),
+        'format': {'name': 'zarr', 'mimetype': 'application/zip'},
+    }
+
+
 def test_provider(config):
     p = XarrayProvider(config)
 
@@ -61,24 +76,12 @@ def test_provider(config):
     assert p.axes == ['lon', 'lat', 'time']
 
 
-def test_domainset(config):
+def test_schema(config):
     p = XarrayProvider(config)
-    domainset = p.get_coverage_domainset()
 
-    assert isinstance(domainset, dict)
-    assert domainset['generalGrid']['axisLabels'] == ['lon', 'lat', 'time']
-    assert domainset['generalGrid']['gridLimits']['axisLabels'] == ['i', 'j']
-    assert domainset['generalGrid']['gridLimits']['axis'][0]['upperBound'] == 101  # noqa
-    assert domainset['generalGrid']['gridLimits']['axis'][1]['upperBound'] == 101  # noqa
-
-
-def test_rangetype(config):
-    p = XarrayProvider(config)
-    rangetype = p.get_coverage_rangetype()
-
-    assert isinstance(rangetype, dict)
-    assert len(rangetype['field']) == 4
-    assert rangetype['field'][0]['name'] == 'analysed sea surface temperature'
+    assert isinstance(p.fields, dict)
+    assert len(p.fields) == 4
+    assert p.fields['analysed_sst']['title'] == 'analysed sea surface temperature'  # noqa
 
 
 def test_query(config):
@@ -97,3 +100,14 @@ def test_numpy_json_serial():
 
     d = float64(500.00000005)
     assert json_serial(d) == 500.00000005
+
+
+def test_no_time(config_no_time):
+    p = XarrayProvider(config_no_time)
+
+    assert len(p.fields) == 4
+    assert p.axes == ['lon', 'lat']
+
+    coverage = p.query(format='json')
+
+    assert sorted(coverage['domain']['axes'].keys()) == ['x', 'y']

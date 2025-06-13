@@ -18,8 +18,8 @@ parameters.
    :header: Provider, bbox, width/height
    :align: left
 
-   `MapScript`,,✅,✅
-   `WMSFacade`_,,✅,✅
+   `MapScript`_,✅,✅
+   `WMSFacade`_,✅,✅
 
 
 Below are specific connection examples based on supported providers.
@@ -30,7 +30,7 @@ Connection examples
 MapScript
 ^^^^^^^^^
 
-`MapScript`_ is MapServer's scripting interface to map rendering.
+MapScript (`see website`_) is MapServer's scripting interface to map rendering.
 
 To publish a map via MapScript, the path to data is required, as well as
 the layer type (`options.type`).  To style the data, set `options.style`. If
@@ -51,7 +51,7 @@ Currently supported style files (`options.style`):
 .. code-block:: yaml
 
    providers:
-       - type: map 
+       - type: map
          name: MapScript
          data: /path/to/data.shp
          options:
@@ -59,8 +59,39 @@ Currently supported style files (`options.style`):
              layer: foo_name
              style: ./foo.sld
          format:
-            name: png 
+            name: png
             mimetype: image/png
+
+Projections are supported through EPSG codes (`options.projection`):        
+
+.. code-block:: yaml
+
+           options:
+             type: MS_LAYER_POINT
+             layer: foo_name
+             projection: 32631
+
+This parameter is optional, defaulting to WGS84 (4236).
+
+This provider also supports `tile indexing <https://mapserver.org/optimization/tileindex.html>`_,
+which lets MapScript create a mosaic on the fly, piecing together a set of files. 
+In order to enable it, set `options.tileindex` to `True` and set the location of the index file on the `data` path.
+
+.. code-block:: yaml
+
+        providers:
+          - type: map
+            name: MapScript
+            data: /data/index.shp
+            options:
+                type: MS_LAYER_RASTER
+                tileindex: True
+                layer: index
+            format:
+                name: png
+                mimetype: image/png
+
+The `options.tileindex` parameter is optional, defaulting to `False`.
 
 WMSFacade
 ^^^^^^^^^
@@ -71,14 +102,15 @@ required.  An optional style name can be defined via `options.style`.
 .. code-block:: yaml
 
    providers:
-       - type: map 
+       - type: map
          name: WMSFacade
          data: https://demo.mapserver.org/cgi-bin/msautotest
          options:
              layer: world_latlong
              style: default
+             version: 1.3.0
          format:
-               name: png 
+               name: png
                mimetype: image/png
 
 
@@ -86,17 +118,23 @@ Data visualization examples
 ---------------------------
 
 * list all collections
+
   * http://localhost:5000/collections
 * overview of dataset
+
   * http://localhost:5000/collections/foo
 * map (default format)
+
   * http://localhost:5000/collections/foo/map
 * map with bbox subset
+
   * http://localhost:5000/collections/foo/map?bbox=-142,42,-52,84
 * map with bbox and temporal subset
+
   * http://localhost:5000/collections/foo/map?bbox=-142,42,-52,84&datetime=2020-04-10T14:11:00Z
 * map with bbox and bbox-crs
+
   * http://localhost:5000/collections/foo/map?bbox-crs=http%3A%2F%2Fwww.opengis.net%2Fdef%2Fcrs%2FEPSG%2F0%2F3857&bbox=4.022369384765626%2C50.690447870569436%2C4.681549072265626%2C51.00260125274477&width=800&height=600&transparent
 
 .. _`OGC API - Maps`: https://ogcapi.ogc.org/maps
-.. _`MapScript`: https://mapserver.org/mapscript/index.html
+.. _`see website`: https://mapserver.org/mapscript/index.html

@@ -122,7 +122,7 @@ class BaseMVTProvider(BaseTileProvider):
     def get_html_metadata(self, dataset, server_url, layer, tileset,
                           title, description, keywords, **kwargs):
         """
-        Gets tile metadata informations in html format
+        Gets tile metadata information in html format
 
         :param dataset: dataset name
         :param server_url: server base url
@@ -248,3 +248,45 @@ class BaseMVTProvider(BaseTileProvider):
             ]
         }
         return links
+
+    def get_tilematrixset(self, tileMatrixSetId):
+        """
+        Get tilematrixset
+
+        :param tileMatrixSetId: tilematrixsetid str
+
+        :returns: tilematrixset enum object
+        """
+
+        enums = [e.value for e in TileMatrixSetEnum]
+        enum = None
+
+        try:
+            for e in enums:
+                if tileMatrixSetId == e.tileMatrixSet:
+                    enum = e
+            if not enum:
+                raise ValueError('could not find this tilematrixset')
+            return enum
+
+        except ValueError as err:
+            LOGGER.error(err)
+
+    def is_in_limits(self, tilematrixset, z, x, y):
+        """
+        Is within the limits of the tilematrixset
+
+        :param z: tilematrix
+        :param x: x
+        :param y: y
+
+        :returns: wether this tile is within the tile matrix
+        set limits (Boolean)
+        """
+
+        try:
+            if int(x) < tilematrixset.tileMatrices[int(z)]['matrixWidth'] and int(y) < tilematrixset.tileMatrices[int(z)]['matrixHeight']: # noqa
+                return True
+            return False
+        except ValueError as err:
+            LOGGER.error(err)

@@ -40,6 +40,17 @@
               </div>
           </div>
         {% endif %}
+        {# GA Customisation - Remove URL
+          <div class="row">
+              <div class="col-sm-4">
+                {% trans %}URL{% endtrans %}
+              </div>
+              <div class="col-sm-8">
+                  <a href="{{ config['metadata']['identification']['url'] }}">
+                    {{ config['metadata']['identification']['url'] | truncate( 70 ) }}</a>
+              </div>
+          </div>
+        #}
       </div>
     </div>
   </section>
@@ -51,7 +62,7 @@
     </p>
   </section>
  {% endif %}
- {% if data['stac'] %}
+ {% if data['stac-collection'] %}
   <section id="collections">
     <h2>{% trans %}SpatioTemporal Assets{% endtrans %}</h2>
     <p>
@@ -59,7 +70,7 @@
     </p>
   </section>
  {% endif %}
- <!-- GA customisation disable Processes and Jobs
+ {# GA customisation disable Processes and Jobs
  {% if data['processes'] %}
   <section id="processes">
       <h2>{% trans %}Processes{% endtrans %}</h2>
@@ -73,7 +84,7 @@
         <a title="Browse jobs" href="{{config.server.url}}/jobs">{% trans %}Browse jobs{% endtrans %}</a>
       </p>
   </section>
- {% endif %} -->
+ {% endif %} #}
   <section id="openapi">
       <h2>{% trans %}API Definition{% endtrans %}</h2>
       <p>
@@ -89,21 +100,23 @@
         <a href="https://github.com/GeoscienceAustralia/pygeoapi" target="_blank">ga-pygeoapi</a>
     </p>
   </section>
-  <!-- GA customisation disable Conformance and Tile Matrix Sets
+  {# GA customisation disable Conformance and Tile Matrix Sets
   <section id="conformance">
       <h2>{% trans %}Conformance{% endtrans %}</h2>
       <p>
         <a href="{{ config['server']['url'] }}/conformance?f=html">{% trans %}View the conformance classes of this service{% endtrans %}</a>
       </p>
   </section>
+  {% if data['tile'] %}
   <section id="tilematrixsets">
       <h2>{% trans %}Tile Matrix Sets{% endtrans %}</h2>
       <p>
         <a href="{{ config['server']['url'] }}/TileMatrixSets?f=html">{% trans %}View the Tile Matrix Sets available on this service{% endtrans %}</a>
       </p>
-  </section> -->
+  </section>
+  {% endif %} #}
   </div>
-  <!-- GA customisation disable class="card"
+  {# GA customisation disable class="card"
   <div class="col-md-4 col-sm-12">
     <div class="card mb-3">
       <div class="card-header">
@@ -121,11 +134,12 @@
       <div class="card-body">
         <b>{% trans %}Address{% endtrans %}</b><br/>
         <div class="section">
-          <span>{{ config['metadata']['contact']['address'] }}</span><br/>
-          <span>{{ config['metadata']['contact']['city'] }}</span>,
-          <span>{{ config['metadata']['contact']['stateorprovince'] }}</span><br/>
-          <span>{{ config['metadata']['contact']['postalcode'] }}</span><br/>
-          <span>{{ config['metadata']['contact']['country'] }}</span>
+          <span>{{ config['metadata']['contact']['name'] }}</span><br/>
+          {% for key in ['address', 'city', 'stateorprovince', 'postalcode', 'country'] %}
+             {% if key in config['metadata']['contact'] %}
+             <span>{{ config['metadata']['contact'][key] }}</span><br/>
+             {% endif %}
+          {% endfor %}
         </div>
         <div>
           <b>{% trans %}Email{% endtrans %}</b><br/>
@@ -152,7 +166,7 @@
           {% endif %}
         </div>
       </div>
-    </div> -->
+    </div> #}
   </div>
 </div>
 

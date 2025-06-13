@@ -38,18 +38,21 @@ server:
     bind:
         host: 0.0.0.0
         port: 80
-    url: http://localhost:5000
+    url: ${PYGEOAPI_SERVER_URL:-http://localhost:5000}
     mimetype: application/json; charset=UTF-8
     encoding: utf-8
     gzip: false
     language: en-US
     cors: true
     pretty_print: true
-    limit: 10
+    admin: ${PYGEOAPI_SERVER_ADMIN:-false}
+    limits:
+        default_items: 10
+        max_items: 50
     # templates: /path/to/templates
     map:
-        url: https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}.png
-        attribution: '<a href="https://wikimediafoundation.org/wiki/Maps_Terms_of_Use">Wikimedia maps</a> | Map data &copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap contributors</a>'
+        url: https://tile.openstreetmap.org/{z}/{x}/{y}.png
+        attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap contributors</a>'
     ogc_schemas_location: /schemas.opengis.net
 
 logging:
@@ -200,7 +203,7 @@ resources:
               hreflang: nl-NL
         extents:
             spatial:
-                bbox: [50.7539, 7.21097, 53.4658, 3.37087]
+                bbox: [3.37,50.75,7.21,53.47]
                 crs: http://www.opengis.net/def/crs/OGC/1.3/CRS84
             temporal:
                 begin:
@@ -301,7 +304,7 @@ resources:
               hreflang: en-US
         extents:
             spatial:
-                bbox: [36.0, 17.0, 46.0, 18.0]
+                bbox: [5.0,36.0,20.0,46.0]
                 crs: http://www.opengis.net/def/crs/OGC/1.3/CRS84
             temporal:
                 begin:
@@ -342,7 +345,7 @@ resources:
         keywords:
             - Portugal
             - POI
-            - Point of Interrest
+            - Point of Interest
             - Madeira
             - Azores
             - OSM
@@ -438,7 +441,7 @@ resources:
               hreflang: nl-NL
         extents:
             spatial:
-                bbox: [50.7539, 7.21097, 53.4658, 3.37087]
+                bbox: [3.37,50.75,7.21,53.47]
                 crs: http://www.opengis.net/def/crs/OGC/1.3/CRS84
             temporal:
                 begin:
@@ -481,7 +484,7 @@ resources:
               hreflang: nl-NL
         extents:
             spatial:
-                bbox: [50.7539, 7.21097, 53.4658, 3.37087]
+                bbox: [3.37,50.75,7.21,53.47]
                 crs: http://www.opengis.net/def/crs/OGC/1.3/CRS84
             temporal:
                 begin:

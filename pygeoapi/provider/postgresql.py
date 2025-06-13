@@ -6,11 +6,13 @@
 #          John A Stevenson <jostev@bgs.ac.uk>
 #          Colin Blackburn <colb@bgs.ac.uk>
 #          Francesco Bartoli <xbartolone@gmail.com>
+#          Bernhard Mallinger <bernhard.mallinger@eox.at>
 #
 # Copyright (c) 2018 Jorge Samuel Mendes de Jesus
-# Copyright (c) 2023 Tom Kralidis
+# Copyright (c) 2025 Tom Kralidis
 # Copyright (c) 2022 John A Stevenson and Colin Blackburn
 # Copyright (c) 2023 Francesco Bartoli
+# Copyright (c) 2024 Bernhard Mallinger
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -48,29 +50,33 @@
 # gunzip < tests/data/hotosm_bdi_waterways.sql.gz |
 #  psql -U postgres -h 127.0.0.1 -p 5432 test
 
+from copy import deepcopy
+from datetime import datetime
+from decimal import Decimal
+import functools
 import logging
 
-from copy import deepcopy
 from geoalchemy2 import Geometry  # noqa - this isn't used explicitly but is needed to process Geometry columns
 from geoalchemy2.functions import ST_MakeEnvelope
-from geoalchemy2.shape import to_shape
+from geoalchemy2.shape import to_shape, from_shape
 from pygeofilter.backends.sqlalchemy.evaluate import to_filter
 import pyproj
 import shapely
-from sqlalchemy import create_engine, MetaData, PrimaryKeyConstraint, asc, desc
+from sqlalchemy import create_engine, MetaData, PrimaryKeyConstraint, asc, \
+    desc, delete
 from sqlalchemy.engine import URL
-from sqlalchemy.exc import InvalidRequestError, OperationalError
+from sqlalchemy.exc import ConstraintColumnNotFoundError, \
+    InvalidRequestError, OperationalError
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session, load_only
 from sqlalchemy.sql.expression import and_
 
 from pygeoapi.provider.base import BaseProvider, \
-    ProviderConnectionError, ProviderQueryError, ProviderItemNotFoundError
+    ProviderConnectionError, ProviderInvalidDataError, ProviderQueryError, \
+    ProviderItemNotFoundError
 from pygeoapi.util import get_transform_from_crs
 
 
-_ENGINE_STORE = {}
-_TABLE_MODEL_STORE = {}
 LOGGER = logging.getLogger(__name__)
 
 
@@ -102,14 +108,36 @@ class PostgreSQLProvider(BaseProvider):
         LOGGER.debug(f'ID field: {self.id_field}')
         LOGGER.debug(f'Geometry field: {self.geom}')
 
+        # conforming to the docs:
+        # https://docs.pygeoapi.io/en/latest/data-publishing/ogcapi-features.html#connection-examples # noqa
+        self.storage_crs = provider_def.get(
+            'storage_crs',
+            'https://www.opengis.net/def/crs/OGC/0/CRS84'
+        )
+        LOGGER.debug(f'Configured Storage CRS: {self.storage_crs}')
+
         # Read table information from database
         options = None
         if provider_def.get('options'):
             options = provider_def['options']
         self._store_db_parameters(provider_def['data'], options)
-        self._engine, self.table_model = self._get_engine_and_table_model()
+        self._engine = get_engine(
+            self.db_host,
+            self.db_port,
+            self.db_name,
+            self.db_user,
+            self._db_password,
+            **(self.db_options or {})
+        )
+        self.table_model = get_table_model(
+            self.table,
+            self.id_field,
+            self.db_search_path,
+            self._engine
+        )
+
         LOGGER.debug(f'DB connection: {repr(self._engine.url)}')
-        self.fields = self.get_fields()
+        self.get_fields()
 
     def query(self, offset=0, limit=10, resulttype='results',
               bbox=[], datetime_=None, properties=[], sortby=[],
@@ -140,6 +168,7 @@ class PostgreSQLProvider(BaseProvider):
         property_filters = self._get_property_filters(properties)
         cql_filters = self._get_cql_filters(filterq)
         bbox_filter = self._get_bbox_filter(bbox)
+        time_filter = self._get_datetime_filter(datetime_)
         order_by_clauses = self._get_order_by_clauses(sortby, self.table_model)
         selected_properties = self._select_properties_clause(select_properties,
                                                              skip_geometry)
@@ -151,15 +180,10 @@ class PostgreSQLProvider(BaseProvider):
                        .filter(property_filters)
                        .filter(cql_filters)
                        .filter(bbox_filter)
-                       .order_by(*order_by_clauses)
-                       .options(selected_properties)
-                       .offset(offset))
+                       .filter(time_filter)
+                       .options(selected_properties))
 
             matched = results.count()
-            if limit < matched:
-                returned = limit
-            else:
-                returned = matched
 
             LOGGER.debug(f'Found {matched} result(s)')
 
@@ -168,14 +192,16 @@ class PostgreSQLProvider(BaseProvider):
                 'type': 'FeatureCollection',
                 'features': [],
                 'numberMatched': matched,
-                'numberReturned': returned
+                'numberReturned': 0
             }
 
             if resulttype == "hits" or not results:
-                response['numberReturned'] = 0
                 return response
+
             crs_transform_out = self._get_crs_transform(crs_transform_spec)
-            for item in results.limit(limit):
+
+            for item in results.order_by(*order_by_clauses).offset(offset).limit(limit):  # noqa
+                response['numberReturned'] += 1
                 response['features'].append(
                     self._sqlalchemy_to_feature(item, crs_transform_out)
                 )
@@ -188,39 +214,64 @@ class PostgreSQLProvider(BaseProvider):
 
         :returns: dict of fields
         """
+
         LOGGER.debug('Get available fields/properties')
 
         # sql-schema only allows these types, so we need to map from sqlalchemy
         # string, number, integer, object, array, boolean, null,
         # https://json-schema.org/understanding-json-schema/reference/type.html
         column_type_map = {
-            str: 'string',
+            bool: 'boolean',
+            datetime: 'string',
+            Decimal: 'number',
+            dict: 'object',
             float: 'number',
             int: 'integer',
-            bool: 'boolean',
+            str: 'string'
         }
-        default_value = 'string'
+        default_type = 'string'
+
+        # https://json-schema.org/understanding-json-schema/reference/string#built-in-formats  # noqa
+        column_format_map = {
+            'date': 'date',
+            'interval': 'duration',
+            'time': 'time',
+            'timestamp': 'date-time'
+        }
 
         def _column_type_to_json_schema_type(column_type):
             try:
                 python_type = column_type.python_type
             except NotImplementedError:
                 LOGGER.warning(f'Unsupported column type {column_type}')
-                return default_value
+                return default_type
             else:
                 try:
                     return column_type_map[python_type]
                 except KeyError:
                     LOGGER.warning(f'Unsupported column type {column_type}')
-                    return default_value
+                    return default_type
 
-        return {
-            str(column.name): {
-                'type': _column_type_to_json_schema_type(column.type)
-            }
-            for column in self.table_model.__table__.columns
-            if column.name != self.geom  # Exclude geometry column
-        }
+        def _column_format_to_json_schema_format(column_type):
+            try:
+                ct = str(column_type).lower()
+                return column_format_map[ct]
+            except KeyError:
+                LOGGER.debug('No string format detected')
+                return None
+
+        if not self._fields:
+            for column in self.table_model.__table__.columns:
+                LOGGER.debug(f'Testing {column.name}')
+                if column.name == self.geom:
+                    continue
+
+                self._fields[str(column.name)] = {
+                    'type': _column_type_to_json_schema_type(column.type),
+                    'format': _column_format_to_json_schema_format(column.type)
+                }
+
+        return self._fields
 
     def get(self, identifier, crs_transform_spec=None, **kwargs):
         """
@@ -269,120 +320,76 @@ class PostgreSQLProvider(BaseProvider):
 
         return feature
 
+    def create(self, item):
+        """
+        Create a new item
+
+        :param item: `dict` of new item
+
+        :returns: identifier of created item
+        """
+
+        identifier, json_data = self._load_and_prepare_item(
+            item, accept_missing_identifier=True)
+
+        new_instance = self._feature_to_sqlalchemy(json_data, identifier)
+        with Session(self._engine) as session:
+            session.add(new_instance)
+            session.commit()
+            result_id = getattr(new_instance, self.id_field)
+
+        # NOTE: need to use id from instance in case it's generated
+        return result_id
+
+    def update(self, identifier, item):
+        """
+        Updates an existing item
+
+        :param identifier: feature id
+        :param item: `dict` of partial or full item
+
+        :returns: `bool` of update result
+        """
+
+        identifier, json_data = self._load_and_prepare_item(
+            item, raise_if_exists=False)
+
+        new_instance = self._feature_to_sqlalchemy(json_data, identifier)
+        with Session(self._engine) as session:
+            session.merge(new_instance)
+            session.commit()
+
+        return True
+
+    def delete(self, identifier):
+        """
+        Deletes an existing item
+
+        :param identifier: item id
+
+        :returns: `bool` of deletion result
+        """
+        with Session(self._engine) as session:
+            id_column = getattr(self.table_model, self.id_field)
+            result = session.execute(
+                delete(self.table_model)
+                .where(id_column == identifier)
+            )
+            session.commit()
+
+        return result.rowcount > 0
+
     def _store_db_parameters(self, parameters, options):
         self.db_user = parameters.get('user')
         self.db_host = parameters.get('host')
         self.db_port = parameters.get('port', 5432)
         self.db_name = parameters.get('dbname')
-        self.db_search_path = parameters.get('search_path', ['public'])
+        # db_search_path gets converted to a tuple here in order to ensure it
+        # is hashable - which allows us to use functools.cache() when
+        # reflecting the table definition from the DB
+        self.db_search_path = tuple(parameters.get('search_path', ['public']))
         self._db_password = parameters.get('password')
         self.db_options = options
-
-    def _get_engine_and_table_model(self):
-        """
-        Create a SQL Alchemy engine for the database and reflect the table
-        model.  Use existing versions from stores if available to allow reuse
-        of Engine connection pool and save expensive table reflection.
-        """
-        # One long-lived engine is used per database URL:
-        # https://docs.sqlalchemy.org/en/14/core/connections.html#basic-usage
-        engine_store_key = (self.db_user, self.db_host, self.db_port,
-                            self.db_name)
-        try:
-            engine = _ENGINE_STORE[engine_store_key]
-        except KeyError:
-            conn_str = URL.create(
-                'postgresql+psycopg2',
-                username=self.db_user,
-                password=self._db_password,
-                host=self.db_host,
-                port=self.db_port,
-                database=self.db_name
-            )
-            conn_args = {
-                'client_encoding': 'utf8',
-                'application_name': 'pygeoapi'
-            }
-            if self.db_options:
-                conn_args.update(self.db_options)
-            engine = create_engine(
-                conn_str,
-                connect_args=conn_args,
-                pool_pre_ping=True)
-            _ENGINE_STORE[engine_store_key] = engine
-
-        # Reuse table model if one exists
-        table_model_store_key = (self.db_host, self.db_port, self.db_name,
-                                 self.table)
-        try:
-            table_model = _TABLE_MODEL_STORE[table_model_store_key]
-        except KeyError:
-            table_model = self._reflect_table_model(engine)
-            _TABLE_MODEL_STORE[table_model_store_key] = table_model
-
-        return engine, table_model
-
-    def _reflect_table_model(self, engine):
-        """
-        Reflect database metadata to create a SQL Alchemy model corresponding
-        to target table.  This requires a database query and is expensive to
-        perform.
-        """
-        metadata = MetaData()
-
-        # Look for table in the first schema in the search path
-        try:
-            schema = self.db_search_path[0]
-            metadata.reflect(
-                bind=engine, schema=schema, only=[self.table], views=True)
-        except OperationalError:
-            msg = (f"Could not connect to {repr(engine.url)} "
-                   "(password hidden).")
-            raise ProviderConnectionError(msg)
-        except InvalidRequestError:
-            msg = (f"Table '{self.table}' not found in schema '{schema}' "
-                   f"on {repr(engine.url)}.")
-            raise ProviderQueryError(msg)
-
-        # Create SQLAlchemy model from reflected table
-        # It is necessary to add the primary key constraint because SQLAlchemy
-        # requires it to reflect the table, but a view in a PostgreSQL database
-        # does not have a primary key defined.
-        sqlalchemy_table_def = metadata.tables[f'{schema}.{self.table}']
-        try:
-            sqlalchemy_table_def.append_constraint(
-                PrimaryKeyConstraint(self.id_field)
-            )
-        except KeyError:
-            msg = (f"No such id_field column ({self.id_field}) on "
-                   f"{schema}.{self.table}.")
-            raise ProviderQueryError(msg)
-
-        Base = automap_base(metadata=metadata)
-        Base.prepare(
-            name_for_scalar_relationship=self._name_for_scalar_relationship,
-        )
-        TableModel = getattr(Base.classes, self.table)
-
-        return TableModel
-
-    @staticmethod
-    def _name_for_scalar_relationship(
-        base, local_cls, referred_cls, constraint,
-    ):
-        """Function used when automapping classes and relationships from
-        database schema and fixes potential naming conflicts.
-        """
-        name = referred_cls.__name__.lower()
-        local_table = local_cls.__table__
-        if name in local_table.columns:
-            newname = name + '_'
-            LOGGER.debug(
-                f'Already detected column name {name!r} in table '
-                f'{local_table!r}. Using {newname!r} for relationship name.'
-            )
-            return newname
-        return name
 
     def _sqlalchemy_to_feature(self, item, crs_transform_out=None):
         feature = {
@@ -407,6 +414,26 @@ class PostgreSQLProvider(BaseProvider):
             feature['geometry'] = None
 
         return feature
+
+    def _feature_to_sqlalchemy(self, json_data, identifier=None):
+        attributes = {**json_data['properties']}
+        # 'identifier' key maybe be present in geojson properties, but might
+        # not be a valid db field
+        attributes.pop('identifier', None)
+        attributes[self.geom] = from_shape(
+            shapely.geometry.shape(json_data['geometry']),
+            # NOTE: for some reason, postgis in the github action requires
+            # explicit crs information. i think it's valid to assume 4326:
+            # https://portal.ogc.org/files/108198#feature-crs
+            srid=pyproj.CRS.from_user_input(self.storage_crs).to_epsg()
+        )
+        attributes[self.id_field] = identifier
+
+        try:
+            return self.table_model(**attributes)
+        except Exception as e:
+            LOGGER.exception('Failed to create db model')
+            raise ProviderInvalidDataError(str(e))
 
     def _get_order_by_clauses(self, sort_by, table_model):
         # Build sort_by clauses if provided
@@ -459,6 +486,29 @@ class PostgreSQLProvider(BaseProvider):
 
         return bbox_filter
 
+    def _get_datetime_filter(self, datetime_):
+        if datetime_ in (None, '../..'):
+            return True
+        else:
+            if self.time_field is None:
+                LOGGER.error('time_field not enabled for collection')
+                raise ProviderQueryError()
+
+            time_column = getattr(self.table_model, self.time_field)
+
+            if '/' in datetime_:  # envelope
+                LOGGER.debug('detected time range')
+                time_begin, time_end = datetime_.split('/')
+                if time_begin == '..':
+                    datetime_filter = time_column <= time_end
+                elif time_end == '..':
+                    datetime_filter = time_column >= time_begin
+                else:
+                    datetime_filter = time_column.between(time_begin, time_end)
+            else:
+                datetime_filter = time_column == datetime_
+        return datetime_filter
+
     def _select_properties_clause(self, select_properties, skip_geometry):
         # List the column names that we want
         if select_properties:
@@ -495,3 +545,91 @@ class PostgreSQLProvider(BaseProvider):
         else:
             crs_transform = None
         return crs_transform
+
+
+@functools.cache
+def get_engine(
+        host: str,
+        port: str,
+        database: str,
+        user: str,
+        password: str,
+        **connection_options
+):
+    """Create SQL Alchemy engine."""
+    conn_str = URL.create(
+        'postgresql+psycopg2',
+        username=user,
+        password=password,
+        host=host,
+        port=int(port),
+        database=database
+    )
+    conn_args = {
+        'client_encoding': 'utf8',
+        'application_name': 'pygeoapi',
+        **connection_options,
+    }
+    engine = create_engine(
+        conn_str,
+        connect_args=conn_args,
+        pool_pre_ping=True)
+    return engine
+
+
+@functools.cache
+def get_table_model(
+        table_name: str,
+        id_field: str,
+        db_search_path: tuple[str],
+        engine,
+):
+    """Reflect table."""
+    metadata = MetaData()
+
+    # Look for table in the first schema in the search path
+    schema = db_search_path[0]
+    try:
+        metadata.reflect(
+            bind=engine, schema=schema, only=[table_name], views=True)
+    except OperationalError:
+        raise ProviderConnectionError(
+            f"Could not connect to {repr(engine.url)} (password hidden).")
+    except InvalidRequestError:
+        raise ProviderQueryError(
+            f"Table '{table_name}' not found in schema '{schema}' "
+            f"on {repr(engine.url)}."
+        )
+
+    # Create SQLAlchemy model from reflected table
+    # It is necessary to add the primary key constraint because SQLAlchemy
+    # requires it to reflect the table, but a view in a PostgreSQL database
+    # does not have a primary key defined.
+    sqlalchemy_table_def = metadata.tables[f'{schema}.{table_name}']
+    try:
+        sqlalchemy_table_def.append_constraint(PrimaryKeyConstraint(id_field))
+    except (ConstraintColumnNotFoundError, KeyError):
+        raise ProviderQueryError(
+            f"No such id_field column ({id_field}) on {schema}.{table_name}.")
+
+    _Base = automap_base(metadata=metadata)
+    _Base.prepare(
+        name_for_scalar_relationship=_name_for_scalar_relationship,
+    )
+    return getattr(_Base.classes, table_name)
+
+
+def _name_for_scalar_relationship(base, local_cls, referred_cls, constraint):
+    """Function used when automapping classes and relationships from
+    database schema and fixes potential naming conflicts.
+    """
+    name = referred_cls.__name__.lower()
+    local_table = local_cls.__table__
+    if name in local_table.columns:
+        newname = name + '_'
+        LOGGER.debug(
+            f'Already detected column name {name!r} in table '
+            f'{local_table!r}. Using {newname!r} for relationship name.'
+        )
+        return newname
+    return name

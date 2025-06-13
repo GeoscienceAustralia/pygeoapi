@@ -5,7 +5,7 @@
 #          Abdulazeez Abdulazeez Adeshina <youngestdev@gmail.com>
 #
 # Copyright (c) 2020 Francesco Bartoli
-# Copyright (c) 2022 Tom Kralidis
+# Copyright (c) 2025 Tom Kralidis
 # Copyright (c) 2022 Abdulazeez Abdulazeez Adeshina
 #
 # Permission is hereby granted, free of charge, to any person
@@ -38,7 +38,6 @@ from typing import Callable, Union
 from pathlib import Path
 
 import click
-
 from starlette.routing import Route, Mount
 from starlette.staticfiles import StaticFiles
 from starlette.applications import Starlette
@@ -50,7 +49,15 @@ from starlette.responses import (
 )
 import uvicorn
 
-from pygeoapi.api import API
+from pygeoapi.api import API, APIRequest, apply_gzip
+import pygeoapi.api as core_api
+import pygeoapi.api.coverages as coverages_api
+import pygeoapi.api.environmental_data_retrieval as edr_api
+import pygeoapi.api.itemtypes as itemtypes_api
+import pygeoapi.api.maps as maps_api
+import pygeoapi.api.processes as processes_api
+import pygeoapi.api.stac as stac_api
+import pygeoapi.api.tiles as tiles_api
 from pygeoapi.openapi import load_openapi_document
 from pygeoapi.config import get_config
 from pygeoapi.util import get_api_rules
@@ -63,6 +70,7 @@ if 'PYGEOAPI_OPENAPI' not in os.environ:
 OPENAPI = load_openapi_document()
 
 if CONFIG['server'].get('admin'):
+    import pygeoapi.admin as admin_api
     from pygeoapi.admin import Admin
 
 p = Path(__file__)
@@ -96,27 +104,7 @@ def call_api_threadsafe(
     return api_call(*args)
 
 
-async def get_response(
-        api_call,
-        *args,
-) -> Union[Response, JSONResponse, HTMLResponse]:
-    """
-    Creates a Starlette Response object and updates matching headers.
-
-    Runs the core api handler in a separate thread in order to avoid
-    blocking the main event loop.
-
-    :param result: The result of the API call.
-                   This should be a tuple of (headers, status, content).
-
-    :returns: A Response instance.
-    """
-
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None, call_api_threadsafe, loop, api_call, *args)
-
-    headers, status, content = result
+def _to_response(headers, status, content):
     if headers['Content-Type'] == 'text/html':
         response = HTMLResponse(content=content, status_code=status)
     else:
@@ -130,6 +118,30 @@ async def get_response(
     return response
 
 
+async def execute_from_starlette(api_function, request: Request, *args,
+                                 skip_valid_check=False,
+                                 alternative_api=None
+                                 ) -> Response:
+    actual_api = api_ if alternative_api is None else alternative_api
+    api_request = await APIRequest.from_starlette(request, actual_api.locales)
+    content: Union[str, bytes]
+    if not skip_valid_check and not api_request.is_valid():
+        headers, status, content = actual_api.get_format_exception(api_request)
+    else:
+
+        loop = asyncio.get_running_loop()
+        headers, status, content = await loop.run_in_executor(
+            None, call_api_threadsafe, loop, api_function,
+            actual_api, api_request, *args)
+        # NOTE: that gzip currently doesn't work in starlette
+        #       https://github.com/geopython/pygeoapi/issues/1591
+        content = apply_gzip(headers, content)
+
+    response = _to_response(headers, status, content)
+
+    return response
+
+
 async def landing_page(request: Request):
     """
     OGC API landing page endpoint
@@ -138,7 +150,7 @@ async def landing_page(request: Request):
 
     :returns: Starlette HTTP Response
     """
-    return await get_response(api_.landing_page, request)
+    return await execute_from_starlette(core_api.landing_page, request)
 
 
 async def openapi(request: Request):
@@ -149,7 +161,7 @@ async def openapi(request: Request):
 
     :returns: Starlette HTTP Response
     """
-    return await get_response(api_.openapi_, request)
+    return await execute_from_starlette(core_api.openapi_, request)
 
 
 async def conformance(request: Request):
@@ -160,7 +172,7 @@ async def conformance(request: Request):
 
     :returns: Starlette HTTP Response
     """
-    return await get_response(api_.conformance, request)
+    return await execute_from_starlette(core_api.conformance, request)
 
 
 async def get_tilematrix_set(request: Request, tileMatrixSetId=None):
@@ -173,8 +185,9 @@ async def get_tilematrix_set(request: Request, tileMatrixSetId=None):
     if 'tileMatrixSetId' in request.path_params:
         tileMatrixSetId = request.path_params['tileMatrixSetId']
 
-    return await get_response(
-        api_.tilematrixset, request, tileMatrixSetId)
+    return await execute_from_starlette(
+        tiles_api.tilematrixset, request, tileMatrixSetId,
+    )
 
 
 async def get_tilematrix_sets(request: Request):
@@ -183,7 +196,23 @@ async def get_tilematrix_sets(request: Request):
 
     :returns: HTTP response
     """
-    return await get_response(api_.tilematrixsets, request)
+    return await execute_from_starlette(tiles_api.tilematrixsets, request)
+
+
+async def collection_schema(request: Request, collection_id=None):
+    """
+    OGC API collections schema endpoint
+
+    :param request: Starlette Request instance
+    :param collection_id: collection identifier
+
+    :returns: Starlette HTTP Response
+    """
+    if 'collection_id' in request.path_params:
+        collection_id = request.path_params['collection_id']
+
+    return await execute_from_starlette(core_api.get_collection_schema,
+                                        request, collection_id)
 
 
 async def collection_queryables(request: Request, collection_id=None):
@@ -197,8 +226,10 @@ async def collection_queryables(request: Request, collection_id=None):
     """
     if 'collection_id' in request.path_params:
         collection_id = request.path_params['collection_id']
-    return await get_response(
-        api_.get_collection_queryables, request, collection_id)
+
+    return await execute_from_starlette(
+        itemtypes_api.get_collection_queryables, request, collection_id,
+    )
 
 
 async def get_collection_tiles(request: Request, collection_id=None):
@@ -212,8 +243,9 @@ async def get_collection_tiles(request: Request, collection_id=None):
     """
     if 'collection_id' in request.path_params:
         collection_id = request.path_params['collection_id']
-    return await get_response(
-        api_.get_collection_tiles, request, collection_id)
+
+    return await execute_from_starlette(
+        tiles_api.get_collection_tiles, request, collection_id)
 
 
 async def get_collection_tiles_metadata(request: Request, collection_id=None,
@@ -230,9 +262,10 @@ async def get_collection_tiles_metadata(request: Request, collection_id=None,
         collection_id = request.path_params['collection_id']
     if 'tileMatrixSetId' in request.path_params:
         tileMatrixSetId = request.path_params['tileMatrixSetId']
-    return await get_response(
-        api_.get_collection_tiles_metadata, request,
-        collection_id, tileMatrixSetId
+
+    return await execute_from_starlette(
+        tiles_api.get_collection_tiles_metadata, request,
+        collection_id, tileMatrixSetId, skip_valid_check=True,
     )
 
 
@@ -261,9 +294,10 @@ async def get_collection_items_tiles(request: Request, collection_id=None,
         tileRow = request.path_params['tileRow']
     if 'tileCol' in request.path_params:
         tileCol = request.path_params['tileCol']
-    return await get_response(
-        api_.get_collection_tiles_data, request, collection_id,
-        tileMatrixSetId, tile_matrix, tileRow, tileCol
+    return await execute_from_starlette(
+        tiles_api.get_collection_tiles_data, request, collection_id,
+        tileMatrixSetId, tile_matrix, tileRow, tileCol,
+        skip_valid_check=True,
     )
 
 
@@ -283,46 +317,48 @@ async def collection_items(request: Request, collection_id=None, item_id=None):
     if 'item_id' in request.path_params:
         item_id = request.path_params['item_id']
     if item_id is None:
-        if request.method == 'GET':  # list items
-            return await get_response(
-                api_.get_collection_items, request, collection_id)
-        elif request.method == 'POST':  # filter or manage items
+        if request.method == 'POST':  # filter or manage items
             content_type = request.headers.get('content-type')
             if content_type is not None:
                 if content_type == 'application/geo+json':
-                    return await get_response(
-                        api_.manage_collection_item, request,
-                        'create', collection_id)
+                    return await execute_from_starlette(
+                        itemtypes_api.manage_collection_item, request,
+                        'create', collection_id, skip_valid_check=True)
                 else:
-                    return await get_response(
-                        api_.post_collection_items,
+                    return await execute_from_starlette(
+                        itemtypes_api.get_collection_items,
                         request,
-                        collection_id
+                        collection_id,
+                        skip_valid_check=True,
                     )
         elif request.method == 'OPTIONS':
-            return await get_response(
-                api_.manage_collection_item, request,
-                'options', collection_id
+            return await execute_from_starlette(
+                itemtypes_api.manage_collection_item, request,
+                'options', collection_id, skip_valid_check=True,
             )
+        else:  # GET: list items
+            return await execute_from_starlette(
+                itemtypes_api.get_collection_items, request, collection_id,
+                skip_valid_check=True)
 
     elif request.method == 'DELETE':
-        return await get_response(
-            api_.manage_collection_item, request, 'delete',
-            collection_id, item_id
+        return await execute_from_starlette(
+            itemtypes_api.manage_collection_item, request, 'delete',
+            collection_id, item_id, skip_valid_check=True,
         )
     elif request.method == 'PUT':
-        return await get_response(
-            api_.manage_collection_item, request, 'update',
-            collection_id, item_id
+        return await execute_from_starlette(
+            itemtypes_api.manage_collection_item, request, 'update',
+            collection_id, item_id, skip_valid_check=True,
         )
     elif request.method == 'OPTIONS':
-        return await get_response(
-            api_.manage_collection_item, request, 'options',
-            collection_id, item_id
+        return await execute_from_starlette(
+            itemtypes_api.manage_collection_item, request, 'options',
+            collection_id, item_id, skip_valid_check=True,
         )
     else:
-        return await get_response(
-            api_.get_collection_item, request, collection_id, item_id)
+        return await execute_from_starlette(
+            itemtypes_api.get_collection_item, request, collection_id, item_id)
 
 
 async def collection_coverage(request: Request, collection_id=None):
@@ -337,44 +373,12 @@ async def collection_coverage(request: Request, collection_id=None):
     if 'collection_id' in request.path_params:
         collection_id = request.path_params['collection_id']
 
-    return await get_response(
-        api_.get_collection_coverage, request, collection_id)
+    return await execute_from_starlette(
+        coverages_api.get_collection_coverage, request, collection_id,
+        skip_valid_check=True)
 
 
-async def collection_coverage_domainset(request: Request, collection_id=None):
-    """
-    OGC API - Coverages coverage domainset endpoint
-
-    :param request: Starlette Request instance
-    :param collection_id: collection identifier
-
-    :returns: Starlette HTTP Response
-    """
-    if 'collection_id' in request.path_params:
-        collection_id = request.path_params['collection_id']
-
-    return await get_response(
-        api_.get_collection_coverage_domainset, request, collection_id)
-
-
-async def collection_coverage_rangetype(request: Request, collection_id=None):
-    """
-    OGC API - Coverages coverage rangetype endpoint
-
-    :param request: Starlette Request instance
-    :param collection_id: collection identifier
-
-    :returns: Starlette HTTP Response
-    """
-
-    if 'collection_id' in request.path_params:
-        collection_id = request.path_params['collection_id']
-
-    return await get_response(
-        api_.get_collection_coverage_rangetype, request, collection_id)
-
-
-async def collection_map(request: Request, collection_id, style_id=None):
+async def collection_map(request: Request, collection_id=None, style_id=None):
     """
     OGC API - Maps map render endpoint
 
@@ -389,8 +393,9 @@ async def collection_map(request: Request, collection_id, style_id=None):
     if 'style_id' in request.path_params:
         style_id = request.path_params['style_id']
 
-    return await get_response(
-        api_.get_collection_map, request, collection_id, style_id)
+    return await execute_from_starlette(
+        maps_api.get_collection_map, request, collection_id, style_id
+    )
 
 
 async def get_processes(request: Request, process_id=None):
@@ -405,7 +410,8 @@ async def get_processes(request: Request, process_id=None):
     if 'process_id' in request.path_params:
         process_id = request.path_params['process_id']
 
-    return await get_response(api_.describe_processes, request, process_id)
+    return await execute_from_starlette(processes_api.describe_processes,
+                                        request, process_id)
 
 
 async def get_jobs(request: Request, job_id=None):
@@ -422,12 +428,14 @@ async def get_jobs(request: Request, job_id=None):
         job_id = request.path_params['job_id']
 
     if job_id is None:  # list of submit job
-        return await get_response(api_.get_jobs, request)
+        return await execute_from_starlette(processes_api.get_jobs, request)
     else:  # get or delete job
         if request.method == 'DELETE':
-            return await get_response(api_.delete_job, job_id)
+            return await execute_from_starlette(processes_api.delete_job,
+                                                request, job_id)
         else:  # Return status of a specific job
-            return await get_response(api_.get_jobs, request, job_id)
+            return await execute_from_starlette(processes_api.get_jobs,
+                                                request, job_id)
 
 
 async def execute_process_jobs(request: Request, process_id=None):
@@ -443,7 +451,8 @@ async def execute_process_jobs(request: Request, process_id=None):
     if 'process_id' in request.path_params:
         process_id = request.path_params['process_id']
 
-    return await get_response(api_.execute_process, request, process_id)
+    return await execute_from_starlette(processes_api.execute_process,
+                                        request, process_id)
 
 
 async def get_job_result(request: Request, job_id=None):
@@ -459,36 +468,17 @@ async def get_job_result(request: Request, job_id=None):
     if 'job_id' in request.path_params:
         job_id = request.path_params['job_id']
 
-    return await get_response(api_.get_job_result, request, job_id)
+    return await execute_from_starlette(processes_api.get_job_result,
+                                        request, job_id)
 
 
-async def get_job_result_resource(request: Request,
-                                  job_id=None, resource=None):
-    """
-    OGC API - Processes job result resource endpoint
-
-    :param request: Starlette Request instance
-    :param job_id: job identifier
-    :param resource: job resource
-
-    :returns: HTTP response
-    """
-
-    if 'job_id' in request.path_params:
-        job_id = request.path_params['job_id']
-    if 'resource' in request.path_params:
-        resource = request.path_params['resource']
-
-    return await get_response(
-        api_.get_job_result_resource, request, job_id, resource)
-
-
-async def get_collection_edr_query(request: Request, collection_id=None, instance_id=None):  # noqa
+async def get_collection_edr_query(request: Request, collection_id=None, instance_id=None, location_id=None):  # noqa
     """
     OGC EDR API endpoints
 
     :param collection_id: collection identifier
     :param instance_id: instance identifier
+    :param location_id: location id of a /locations/<location_id> query
 
     :returns: HTTP response
     """
@@ -499,10 +489,24 @@ async def get_collection_edr_query(request: Request, collection_id=None, instanc
     if 'instance_id' in request.path_params:
         instance_id = request.path_params['instance_id']
 
-    query_type = request["path"].split('/')[-1]  # noqa
-    return await get_response(
-        api_.get_collection_edr_query, request, collection_id,
-        instance_id, query_type
+    if (request.url.path.endswith('instances') or
+            (instance_id is not None and
+             request.url.path.endswith(instance_id))):
+        return await execute_from_starlette(
+            edr_api.get_collection_edr_instances, request, collection_id,
+            instance_id
+        )
+
+    if 'location_id' in request.path_params:
+        location_id = request.path_params['location_id']
+        query_type = 'locations'
+    else:
+        query_type = request['path'].split('/')[-1]
+
+    return await execute_from_starlette(
+        edr_api.get_collection_edr_query, request, collection_id,
+        instance_id, query_type, location_id,
+        skip_valid_check=True,
     )
 
 
@@ -517,8 +521,9 @@ async def collections(request: Request, collection_id=None):
     """
     if 'collection_id' in request.path_params:
         collection_id = request.path_params['collection_id']
-    return await get_response(
-        api_.describe_collections, request, collection_id)
+
+    return await execute_from_starlette(core_api.describe_collections, request,
+                                        collection_id)
 
 
 async def stac_catalog_root(request: Request):
@@ -529,7 +534,7 @@ async def stac_catalog_root(request: Request):
 
     :returns: Starlette HTTP response
     """
-    return await get_response(api_.get_stac_root, request)
+    return await execute_from_starlette(stac_api.get_stac_root, request)
 
 
 async def stac_catalog_path(request: Request):
@@ -541,7 +546,7 @@ async def stac_catalog_path(request: Request):
     :returns: Starlette HTTP response
     """
     path = request.path_params["path"]
-    return await get_response(api_.get_stac_path, request, path)
+    return await execute_from_starlette(stac_api.get_stac_path, request, path)
 
 
 async def admin_config(request: Request):
@@ -552,11 +557,14 @@ async def admin_config(request: Request):
     """
 
     if request.method == 'GET':
-        return await get_response(ADMIN.get_config, request)
+        return await execute_from_starlette(admin_api.get_config_, request,
+                                            alternative_api=ADMIN)
     elif request.method == 'PUT':
-        return await get_response(ADMIN.put_config, request)
+        return await execute_from_starlette(admin_api.put_config, request,
+                                            alternative_api=ADMIN)
     elif request.method == 'PATCH':
-        return await get_response(ADMIN.patch_config, request)
+        return await execute_from_starlette(admin_api.patch_config, request,
+                                            alternative_api=ADMIN)
 
 
 async def admin_config_resources(request: Request):
@@ -567,9 +575,11 @@ async def admin_config_resources(request: Request):
     """
 
     if request.method == 'GET':
-        return await get_response(ADMIN.get_resources, request)
+        return await execute_from_starlette(admin_api.get_resources, request,
+                                            alternative_api=ADMIN)
     elif request.method == 'POST':
-        return await get_response(ADMIN.put_resource, request)
+        return await execute_from_starlette(admin_api.put_resource, request,
+                                            alternative_api=ADMIN)
 
 
 async def admin_config_resource(request: Request, resource_id: str):
@@ -585,17 +595,21 @@ async def admin_config_resource(request: Request, resource_id: str):
         resource_id = request.path_params['resource_id']
 
     if request.method == 'GET':
-        return await get_response(
-            ADMIN.get_resource, request, resource_id)
+        return await execute_from_starlette(admin_api.get_resource, request,
+                                            resource_id,
+                                            alternative_api=ADMIN)
     elif request.method == 'PUT':
-        return await get_response(
-            ADMIN.put_resource, request, resource_id)
+        return await execute_from_starlette(admin_api.put_resource, request,
+                                            resource_id,
+                                            alternative_api=ADMIN)
     elif request.method == 'PATCH':
-        return await get_response(
-            ADMIN.patch_resource, request, resource_id)
+        return await execute_from_starlette(admin_api.patch_resource, request,
+                                            resource_id,
+                                            alternative_api=ADMIN)
     elif request.method == 'DELETE':
-        return await get_response(
-            ADMIN.delete_resource, request, resource_id)
+        return await execute_from_starlette(admin_api.delete_resource, request,
+                                            resource_id,
+                                            alternative_api=ADMIN)
 
 
 class ApiRulesMiddleware:
@@ -637,6 +651,7 @@ api_routes = [
     Route('/conformance', conformance),
     Route('/TileMatrixSets/{tileMatrixSetId}', get_tilematrix_set),
     Route('/TileMatrixSets', get_tilematrix_sets),
+    Route('/collections/{collection_id:path}/schema', collection_schema),
     Route('/collections/{collection_id:path}/queryables', collection_queryables),  # noqa
     Route('/collections/{collection_id:path}/tiles', get_collection_tiles),
     Route('/collections/{collection_id:path}/tiles/{tileMatrixSetId}', get_collection_tiles_metadata),  # noqa
@@ -645,8 +660,6 @@ api_routes = [
     Route('/collections/{collection_id:path}/items', collection_items, methods=['GET', 'POST', 'OPTIONS']),  # noqa
     Route('/collections/{collection_id:path}/items/{item_id:path}', collection_items, methods=['GET', 'PUT', 'DELETE', 'OPTIONS']),  # noqa
     Route('/collections/{collection_id:path}/coverage', collection_coverage),  # noqa
-    Route('/collections/{collection_id:path}/coverage/domainset', collection_coverage_domainset),  # noqa
-    Route('/collections/{collection_id:path}/coverage/rangetype', collection_coverage_rangetype),  # noqa
     Route('/collections/{collection_id:path}/map', collection_map),
     Route('/collections/{collection_id:path}/styles/{style_id:path}/map', collection_map),  # noqa
     Route('/processes', get_processes),
@@ -655,23 +668,28 @@ api_routes = [
     Route('/jobs/{job_id}', get_jobs, methods=['GET', 'DELETE']),
     Route('/processes/{process_id}/execution', execute_process_jobs, methods=['POST']),  # noqa
     Route('/jobs/{job_id}/results', get_job_result),
-    Route('/jobs/{job_id}/results/{resource}', get_job_result_resource),
     Route('/collections/{collection_id:path}/position', get_collection_edr_query),  # noqa
     Route('/collections/{collection_id:path}/area', get_collection_edr_query),
     Route('/collections/{collection_id:path}/cube', get_collection_edr_query),
     Route('/collections/{collection_id:path}/radius', get_collection_edr_query),  # noqa
     Route('/collections/{collection_id:path}/trajectory', get_collection_edr_query),  # noqa
     Route('/collections/{collection_id:path}/corridor', get_collection_edr_query),  # noqa
+    Route('/collections/{collection_id:path}/locations', get_collection_edr_query),  # noqa
+    Route('/collections/{collection_id:path}/locations/{location_id}', get_collection_edr_query),  # noqa
+    Route('/collections/{collection_id:path}/instances', get_collection_edr_query),  # noqa
+    Route('/collections/{collection_id:path}/instances/{instance_id}', get_collection_edr_query),  # noqa
     Route('/collections/{collection_id:path}/instances/{instance_id}/position', get_collection_edr_query),  # noqa
     Route('/collections/{collection_id:path}/instances/{instance_id}/area', get_collection_edr_query),  # noqa
     Route('/collections/{collection_id:path}/instances/{instance_id}/cube', get_collection_edr_query),  # noqa
     Route('/collections/{collection_id:path}/instances/{instance_id}/radius', get_collection_edr_query),  # noqa
     Route('/collections/{collection_id:path}/instances/{instance_id}/trajectory', get_collection_edr_query),  # noqa
     Route('/collections/{collection_id:path}/instances/{instance_id}/corridor', get_collection_edr_query),  # noqa
+    Route('/collections/{collection_id:path}/instances/{instance_id}/locations', get_collection_edr_query),  # noqa
+    Route('/collections/{collection_id:path}/instances/{instance_id}/locations/{location_id}', get_collection_edr_query),  # noqa
     Route('/collections', collections),
     Route('/collections/{collection_id:path}', collections),
     Route('/stac', stac_catalog_root),
-    Route('/stac/{path:path}', stac_catalog_path),
+    Route('/stac/{path:path}', stac_catalog_path)
 ]
 
 admin_routes = [
@@ -710,7 +728,12 @@ if API_RULES.strict_slashes:
 # CORS: optionally enable from config.
 if CONFIG['server'].get('cors', False):
     from starlette.middleware.cors import CORSMiddleware
-    APP.add_middleware(CORSMiddleware, allow_origins=['*'])
+    APP.add_middleware(
+        CORSMiddleware,
+        allow_origins=['*'],
+        allow_methods=['*'],
+        expose_headers=['*']
+    )
 
 try:
     OGC_SCHEMAS_LOCATION = Path(CONFIG['server']['ogc_schemas_location'])

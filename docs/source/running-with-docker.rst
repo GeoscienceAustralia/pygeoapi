@@ -29,6 +29,12 @@ To run with the default built-in configuration and data:
 
 ...then browse to http://localhost:5000
 
+You can also run pygeoapi with run-with-hot-reload of the configuration enabled
+
+.. code-block:: bash
+
+   docker run -p 5000:80 -it geopython/pygeoapi run-with-hot-reload
+
 You can also run all unit tests to verify:
 
 .. code-block:: bash
@@ -70,6 +76,32 @@ Or you can create a ``Dockerfile`` extending the base image and **copy** in your
    COPY ./my.config.yml /pygeoapi/local.config.yml
 
 A corresponding example can be found in https://github.com/geopython/demo.pygeoapi.io/tree/master/services/pygeoapi_master
+
+Environment Variables for Configuration
+---------------------------------------
+
+The base Docker image supports two additional environment variables for configuring the `pygeoapi` server behavior:
+
+1. **`PYGEOAPI_SERVER_URL`**:  
+   This variable sets the `pygeoapi` server URL in the configuration. It is useful for dynamically configuring the server URL during container deployment. For example:
+
+   .. code-block:: bash
+
+      docker run -p 2018:80 -e PYGEOAPI_SERVER_URL='http://localhost:2018' -it geopython/pygeoapi
+
+   This ensures the service URLs in the configuration file are automatically updated to reflect the specified URL.
+
+2. **`PYGEOAPI_SERVER_ADMIN`**:  
+   This boolean environment variable enables or disables the `pygeoapi` Admin API. By default, the Admin API is disabled. To enable it:
+
+   .. code-block:: bash
+
+      docker run -p 5000:80 -e PYGEOAPI_SERVER_ADMIN=true -it geopython/pygeoapi
+      # run with hot reload
+      docker run -p 5000:80 -e PYGEOAPI_SERVER_ADMIN=true -it geopython/pygeoapi run-with-hot-reload
+
+   To learn more about the Admin API see :ref:`admin-api`.
+
 
 Deploying on a sub-path
 -----------------------

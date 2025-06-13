@@ -32,24 +32,34 @@
 import base64
 from copy import deepcopy
 from filelock import FileLock
+import functools
+from functools import partial
+from dataclasses import dataclass
+from datetime import date, datetime, time, timezone
+from decimal import Decimal
+from enum import Enum
 import json
 import logging
 import mimetypes
 import os
-import re
-import functools
-from functools import partial
-from dataclasses import dataclass
-from datetime import date, datetime, time
-from decimal import Decimal
-from enum import Enum
 import pathlib
 from pathlib import Path
+import re
 from typing import Any, IO, Union, List, Optional, Callable
 from urllib.parse import urlparse
 from urllib.request import urlopen
+import uuid
 
 import dateutil.parser
+from babel.support import Translations
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2.exceptions import TemplateNotFound
+import pyproj
+import pygeofilter.ast
+import pygeofilter.values
+from pyproj.exceptions import CRSError
+from requests import Session
+from requests.structures import CaseInsensitiveDict
 from shapely import ops
 from shapely.geometry import (
     box,
@@ -65,14 +75,6 @@ from shapely.geometry import (
     mapping as geom_to_geojson,
 )
 import yaml
-from babel.support import Translations
-from jinja2 import Environment, FileSystemLoader, select_autoescape
-import pygeofilter.ast
-import pygeofilter.values
-import pyproj
-from pyproj.exceptions import CRSError
-from requests import Session
-from requests.structures import CaseInsensitiveDict
 
 from pygeoapi import __version__
 from pygeoapi import l10n
@@ -126,13 +128,13 @@ def dategetter(date_property: str, collection: dict) -> str:
 
     value = collection.get(date_property)
 
-    if value is None:
-        return None
+    if value is None or isinstance(value, str):
+        return value
+    else:
+        return value.isoformat()
 
-    return value.isoformat()
 
-
-def get_typed_value(value: str) -> Union[float, int, str]:
+def get_typed_value(value: str) -> Union[bool, float, int, str]:
     """
     Derive true type from data value
 
@@ -146,6 +148,8 @@ def get_typed_value(value: str) -> Union[float, int, str]:
             value2 = float(value)
         elif len(value) > 1 and value.startswith('0'):
             value2 = value
+        elif value.lower() in ['true', 'false']:
+            value2 = str2bool(value)
         else:  # int?
             value2 = int(value)
     except ValueError:  # string (default)?
@@ -163,23 +167,39 @@ def yaml_load(fh: IO) -> dict:
     :returns: `dict` representation of YAML
     """
 
-    # support environment variables in config
-    # https://stackoverflow.com/a/55301129
-    path_matcher = re.compile(r'.*\$\{([^}^{]+)\}.*')
+    # # support environment variables in config
+    # # https://stackoverflow.com/a/55301129
 
-    def path_constructor(loader, node):
-        env_var = path_matcher.match(node.value).group(1)
-        if env_var not in os.environ:
-            msg = f'Undefined environment variable {env_var} in config'
-            raise EnvironmentError(msg)
-        return get_typed_value(os.path.expandvars(node.value))
+    env_matcher = re.compile(
+        r'.*?\$\{(?P<varname>\w+)(:-(?P<default>[^}]*))?\}')
+
+    def env_constructor(loader, node):
+        result = ""
+        current_index = 0
+        raw_value = node.value
+        for match_obj in env_matcher.finditer(raw_value):
+            groups = match_obj.groupdict()
+            varname_start = match_obj.span('varname')[0]
+            result += raw_value[current_index:(varname_start-2)]
+            if (var_value := os.getenv(groups['varname'])) is not None:
+                result += var_value
+            elif (default_value := groups.get('default')) is not None:
+                result += default_value
+            else:
+                raise EnvironmentError(
+                    f'Could not find the {groups["varname"]!r} environment '
+                    f'variable'
+                )
+            current_index = match_obj.end()
+        else:
+            result += raw_value[current_index:]
+        return get_typed_value(result)
 
     class EnvVarLoader(yaml.SafeLoader):
         pass
 
-    EnvVarLoader.add_implicit_resolver('!path', path_matcher, None)
-    EnvVarLoader.add_constructor('!path', path_constructor)
-
+    EnvVarLoader.add_implicit_resolver('!env', env_matcher, None)
+    EnvVarLoader.add_constructor('!env', env_constructor)
     return yaml.load(fh, Loader=EnvVarLoader)
 
 
@@ -280,6 +300,11 @@ def format_datetime(value: str, format_: str = DATETIME_FORMAT) -> str:
         return ''
 
     return dateutil.parser.isoparse(value).strftime(format_)
+
+
+def get_current_datetime(tz: timezone = timezone.utc,
+                         format_: str = DATETIME_FORMAT) -> str:
+    return datetime.now(tz).strftime(format_)
 
 
 def file_modified_iso8601(filepath: Path) -> str:
@@ -384,6 +409,8 @@ def json_serial(obj: Any) -> str:
         return l10n.locale2str(obj)
     elif isinstance(obj, (pathlib.PurePath, Path)):
         return str(obj)
+    elif isinstance(obj, uuid.UUID):
+        return str(obj)
     else:
         msg = f'{obj} type {type(obj)} not serializable'
         LOGGER.error(msg)
@@ -407,12 +434,13 @@ def is_url(urlstring: str) -> bool:
         return False
 
 
-def render_j2_template(config: dict, template: Path,
+def render_j2_template(config: dict, tpl_config: dict, template: Path,
                        data: dict, locale_: str = None) -> str:
     """
     render Jinja2 template
 
     :param config: dict of configuration
+    :param tpl_config: dict of template configuration
     :param template: template (relative path)
     :param data: dict of data
     :param locale_: the requested output Locale
@@ -426,7 +454,7 @@ def render_j2_template(config: dict, template: Path,
     LOGGER.debug(f'Locale directory: {locale_dir}')
 
     try:
-        templates = config['server']['templates']['path']
+        templates = tpl_config['path']
         template_paths.insert(0, templates)
         LOGGER.debug(f'using custom templates: {templates}')
     except (KeyError, TypeError):
@@ -454,7 +482,12 @@ def render_j2_template(config: dict, template: Path,
     translations = Translations.load(locale_dir, [locale_])
     env.install_gettext_translations(translations)
 
-    template = env.get_template(template)
+    try:
+        template = env.get_template(template)
+    except TemplateNotFound:
+        LOGGER.debug(f'template {template} not found')
+        template_paths.remove(templates)
+        template = env.get_template(template)
 
     return template.render(config=l10n.translate_struct(config, locale_, True),
                            data=data, locale=locale_, version=__version__)
@@ -578,6 +611,11 @@ class RequestedProcessExecutionMode(Enum):
     respond_async = 'respond-async'
 
 
+class RequestedResponse(Enum):
+    raw = 'raw'
+    document = 'document'
+
+
 class JobStatus(Enum):
     """
     Enum for the job status options specified in the WPS 2.0 specification
@@ -589,6 +627,19 @@ class JobStatus(Enum):
     successful = 'successful'
     failed = 'failed'
     dismissed = 'dismissed'
+
+
+@dataclass(frozen=True)
+class Subscriber:
+    """
+    Store subscriber URLs as defined in:
+
+    https://schemas.opengis.net/ogcapi/processes/part1/1.0/openapi/schemas/subscriber.yaml  # noqa
+    """
+
+    success_uri: str
+    in_progress_uri: Optional[str]
+    failed_uri: Optional[str]
 
 
 def read_data(path: Union[Path, str]) -> Union[bytes, str]:
@@ -674,11 +725,9 @@ def get_crs_from_uri(uri: str) -> pyproj.CRS:
     Author: @MTachon
 
     :param uri: Uniform resource identifier of the coordinate
-        reference system. In accordance with
-        https://docs.ogc.org/pol/09-048r5.html#_naming_rule URIs can
-        take either the form of a URL or a URN
-    :type uri: str
-
+                reference system. In accordance with
+                https://docs.ogc.org/pol/09-048r5.html#_naming_rule URIs can
+                take either the form of a URL or a URN
     :raises `CRSError`: Error raised if no CRS could be identified from the
         URI.
 
@@ -892,15 +941,15 @@ def modify_pygeofilter(
     Modifies the input pygeofilter with information from the provider.
 
     :param ast_tree: `pygeofilter.ast.Node` representing the
-    already parsed pygeofilter expression
+                     already parsed pygeofilter expression
     :param filter_crs_uri: URI of the CRS being used in the filtering
-    expression
+                           expression
     :param storage_crs_uri: An optional string containing the URI of
-    the provider's storage CRS
+                            the provider's storage CRS
     :param geometry_column_name: An optional string containing the
-    actual name of the provider's geometry field
+                                 actual name of the provider's geometry field
     :returns: A new pygeofilter.ast.Node, with the modified filter
-    expression
+              expression
 
     This function modifies the parsed pygeofilter that contains the raw
     filter expression provided by an external client. It performs the
