@@ -32,7 +32,8 @@
 
 import os
 import pytest
-from pygeoapi.provider.oracle import OracleProvider
+from pygeoapi.provider.base import ProviderInvalidQueryError
+from pygeoapi.provider.oracle import OracleProvider, DatabaseConnection
 
 USERNAME = os.environ.get("PYGEOAPI_ORACLE_USER", "geo_test")
 PASSWORD = os.environ.get("PYGEOAPI_ORACLE_PASSWD", "geo_test")
@@ -61,11 +62,15 @@ class SqlManipulator:
         q,
         language,
         filterq,
+        extra_params
     ):
         sql = "ID = 10 AND :foo != :bar"
+        if extra_params.get("custom-auth") == "forbidden":
+            sql = f"{sql} AND 'auth' = 'you are not allowed'"
 
         if sql_query.find(" WHERE ") == -1:
             sql_query = sql_query.replace("#WHERE#", f" WHERE {sql}")
+
         else:
             sql_query = sql_query.replace("#WHERE#", f" AND {sql}")
 
@@ -148,6 +153,20 @@ def config():
 
 
 @pytest.fixture()
+def config_db_conn():
+    return {
+        "conn_dic": {
+            "host": HOST,
+            "port": PORT,
+            "service_name": SERVICE_NAME,
+            "user": USERNAME,
+            "password": PASSWORD,
+        },
+        "table": "lakes",
+    }
+
+
+@pytest.fixture()
 def config_public_synonym():
     return {
         "name": "Oracle",
@@ -199,6 +218,14 @@ def config_properties(config):
     return {
         **config,
         "properties": ["id", "name", "wiki_link"],
+    }
+
+
+@pytest.fixture()
+def config_extra_properties(config):
+    return {
+        **config,
+        "extra_properties": ["'Here the name is ' || name || '!' as tooltip"],
     }
 
 
@@ -332,15 +359,18 @@ def test_get_fields_properties(config_properties):
     Test get_fields with subset of columns.
     Test of property configuration.
     """
+    # NOTE: properties does not influence fields because
+    #       the fields are also used for filtering
     expected_fields = {
         "id": {"type": "NUMBER"},
         "name": {"type": "VARCHAR2"},
         "wiki_link": {"type": "VARCHAR2"},
+        "area": {"type": "NUMBER"},
+        "volume": {"type": "NUMBER"},
     }
 
     provider = OracleProvider(config_properties)
     provided_fields = provider.get_fields()
-    print(provided_fields)
 
     assert provided_fields == expected_fields
     assert provider.fields == expected_fields
@@ -354,6 +384,15 @@ def test_query_with_property_filter(config):
 
     assert len(features) == 1
     assert features[0].get("id") == 12
+
+
+def test_query_with_extra_properties(config_extra_properties):
+    p = OracleProvider(config_extra_properties)
+
+    feature_collection = p.query(properties=[("name", "Aral Sea")])
+    features = feature_collection.get("features")
+
+    assert features[0]["properties"]["tooltip"] == "Here the name is Aral Sea!"
 
 
 def test_query_bbox(config):
@@ -405,6 +444,17 @@ def test_get(config):
     assert result.get("id") == 5
     assert result.get("prev") == 4
     assert result.get("next") == 6
+
+
+def test_get_with_extra_properties(config_extra_properties):
+    """Test simple get"""
+    p = OracleProvider(config_extra_properties)
+    result = p.get(5)
+
+    assert (
+        result["properties"]["tooltip"] ==
+        "Here the name is L. Erie!"
+    )
 
 
 def test_create(config, create_geojson):
@@ -557,3 +607,74 @@ def test_create_point(config, create_point_geojson):
     data = p.get(28)
 
     assert data.get("geometry").get("type") == "Point"
+
+
+def test_query_can_mandate_properties_which_are_not_returned(config):
+    config = {
+        **config,
+        # 'name' has to be filtered, but only 'wiki_link' is returned
+        "properties": ["id", "wiki_link"],
+        "mandatory_properties": ["name"]
+    }
+
+    p = OracleProvider(config)
+    result = p.query(properties=[("name", "Aral Sea")])
+
+    (feature,) = result['features']
+    # id is handled separately, so only wiki link and not name must be here
+    assert feature['properties'].keys() == {"wiki_link"}
+
+
+def test_query_mandatory_properties_must_be_specified(config):
+    config = {
+        **config,
+        "mandatory_properties": ["name"]
+    }
+
+    p = OracleProvider(config)
+    with pytest.raises(ProviderInvalidQueryError):
+        p.query(properties=[("id", "123")])
+
+
+def test_extra_params_are_passed_to_sql_manipulator(config_manipulator):
+    extra_params = [("custom-auth", "forbidden")]
+
+    p = OracleProvider(config_manipulator)
+    response = p.query(properties=extra_params)
+
+    assert not response['features']
+
+
+def test_query_count_sql_manipulator(config_manipulator):
+    """Test query number of hits"""
+    p = OracleProvider(config_manipulator)
+    result = p.query(resulttype="hits")
+
+    assert result.get("numberMatched") == 1
+
+
+@pytest.fixture()
+def database_connection_pool(config_db_conn):
+    os.environ["ORACLE_POOL_MIN"] = "2"  # noqa: F841
+    os.environ["ORACLE_POOL_MAX"] = "10"  # noqa: F841
+    yield
+    if 'ORACLE_POOL_MIN' in os.environ:
+        del os.environ["ORACLE_POOL_MIN"]
+    if 'ORACLE_POOL_MAX' in os.environ:
+        del os.environ["ORACLE_POOL_MAX"]
+
+
+def test_oracle_pool(config_db_conn, database_connection_pool):
+    """
+    Test whether an oracle session pool is created when there are
+    the required env variables.
+    """
+    db_conn = DatabaseConnection(**config_db_conn)
+    assert db_conn.pool
+    assert db_conn.pool.max == int(os.environ.get("ORACLE_POOL_MAX"))
+
+
+def test_query_pool(config, database_connection_pool):
+    """Test query using a DB Session Pool for a valid JSON object with geometry"""   # noqa
+    # Run query test again with session pool
+    test_query(config)

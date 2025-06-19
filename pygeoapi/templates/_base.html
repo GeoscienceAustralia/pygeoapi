@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ (locale|lower)[:2] }}" dir="{% trans %}text_direction{% endtrans %}" >
   <head>
     <meta charset="{{ config['server']['encoding'] }}">
     <title>{% block title %}{% endblock %}{% if not self.title() %}{{ config['metadata']['identification']['title'] }}{% endif %}</title>
@@ -37,7 +37,7 @@
   <body>
   <div class="bg-light sticky-top border-bottom">
     <div class="container">
-      <header class="d-flex flex-wrap justify-content-center py-3">
+      <header class="d-flex flex-wrap align-items-center py-3 justify-content-between">
         <a href="{{ config['server']['url'] }}"
           class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-dark text-decoration-none">
           <img src="{{ config['server']['url'] }}/static/img/ga_logo_inline.png"
@@ -63,11 +63,11 @@
         {% block crumbs %}
         <a href="{{ config['server']['url'] }}">{% trans %}Home{% endtrans %}</a>
         {% endblock %}
-        <span style="float:right">
+        <span style="float: inline-end">
           {% set links_found = namespace(json=0, jsonld=0) %}
 
           {% for link in data['links'] %}
-          {% if link['rel'] == 'alternate' and link['type'] and link['type'] in ['application/json', 'application/geo+json'] %}
+          {% if link['rel'] == 'alternate' and link['type'] and link['type'] in ['application/json', 'application/geo+json', 'application/prs.coverage+json'] %}
           {% set links_found.json = 1 %}
           <a href="{{ link['href'] }}">{% trans %}json{% endtrans %}</a>
           {% elif link['rel'] == 'alternate' and link['type'] and link['type'] == 'application/ld+json' %}

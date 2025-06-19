@@ -88,7 +88,7 @@ class SQLiteGPKGProvider(BaseProvider):
         :returns: dict of fields
         """
 
-        if not self.fields:
+        if not self._fields:
             results = self.cursor.execute(
                 f'PRAGMA table_info({self.table})').fetchall()
             for item in results:
@@ -100,16 +100,16 @@ class SQLiteGPKGProvider(BaseProvider):
                     json_type = 'string'
 
                 if json_type is not None:
-                    self.fields[item['name']] = {'type': json_type}
+                    self._fields[item['name']] = {'type': json_type}
 
-        return self.fields
+        return self._fields
 
     def __get_where_clauses(self, properties=[], bbox=[]):
         """
         Generarates WHERE conditions to be implemented in query.
         Private method mainly associated with query method.
 
-        Method returns part of the SQL query, plus tupple to be used
+        Method returns part of the SQL query, plus tuple to be used
         in the sqlite query method
 
         :param properties: list of tuples (name, value)

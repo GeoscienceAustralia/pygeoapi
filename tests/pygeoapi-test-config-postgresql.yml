@@ -43,7 +43,9 @@ server:
         - fr-CA
     # cors: true
     pretty_print: true
-    limit: 100
+    limits:
+        default_items: 100
+        max_items: 100
     # templates:
       # path: /path/to/Jinja2/templates
       # static: /path/to/static/folder # css/js/img
@@ -134,6 +136,7 @@ resources:
                 user: postgres
                 password: postgres
                 search_path: [osm, public]
+            editable: true
             options:
                 # Maximum time to wait while connecting, in seconds.
                 connect_timeout: 10

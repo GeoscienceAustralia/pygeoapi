@@ -2,7 +2,7 @@
 #
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2022 Tom Kralidis
+# Copyright (c) 2024 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -33,8 +33,10 @@ import uuid
 
 from pygeoapi.process.manager.base import BaseManager
 from pygeoapi.util import (
-    RequestedProcessExecutionMode,
     JobStatus,
+    RequestedProcessExecutionMode,
+    RequestedResponse,
+    Subscriber
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -54,23 +56,30 @@ class DummyManager(BaseManager):
 
         super().__init__(manager_def)
 
-    def get_jobs(self, status: JobStatus = None) -> list:
+    def get_jobs(self, status: JobStatus = None, limit=None, offset=None
+                 ) -> dict:
         """
         Get process jobs, optionally filtered by status
 
         :param status: job status (accepted, running, successful,
                        failed, results) (default is all)
+        :param limit: number of jobs to return
+        :param offset: pagination offset
 
-        :returns: `list` of jobs (identifier, status, process identifier)
+        :returns: dict of list of jobs (identifier, status, process identifier)
+                  and numberMatched
         """
 
-        return []
+        return {'jobs': [], 'numberMatched': 0}
 
     def execute_process(
             self,
             process_id: str,
             data_dict: dict,
-            execution_mode: Optional[RequestedProcessExecutionMode] = None
+            execution_mode: Optional[RequestedProcessExecutionMode] = None,
+            requested_outputs: Optional[dict] = None,
+            subscriber: Optional[Subscriber] = None,
+            requested_response: Optional[RequestedResponse] = RequestedResponse.raw.value  # noqa
     ) -> Tuple[str, str, Any, JobStatus, Optional[Dict[str, str]]]:
         """
         Default process execution handler
@@ -78,9 +87,19 @@ class DummyManager(BaseManager):
         :param process_id: process identifier
         :param data_dict: `dict` of data parameters
         :param execution_mode: requested execution mode
+        :param requested_outputs: `dict` optionally specify the subset of
+            required outputs - defaults to all outputs.
+            The value of any key may be an object and include the property
+            `transmissionMode` - defaults to `value`.
+            Note: 'optional' is for backward compatibility.
+        :param subscriber: `Subscriber` optionally specifying callback urls
+        :param requested_response: `RequestedResponse` optionally specifying
+                                   raw or document (default is `raw`)
 
+        :raises UnknownProcessError: if the input process_id does not
+                                     correspond to a known process
         :returns: tuple of job_id, MIME type, response payload, status and
-                  optionally additional HTTP headers to include in the
+                  optionally additional HTTP headers to include in the final
                   response
         """
 
@@ -94,17 +113,27 @@ class DummyManager(BaseManager):
                 LOGGER.debug('Dummy manager does not support asynchronous')
                 LOGGER.debug('Forcing synchronous execution')
 
+        self._send_in_progress_notification(subscriber)
         processor = self.get_processor(process_id)
         try:
-            jfmt, outputs = processor.execute(data_dict)
+            jfmt, outputs = processor.execute(
+                data_dict, outputs=requested_outputs)
             current_status = JobStatus.successful
-        except Exception:
+            self._send_success_notification(subscriber, outputs)
+        except Exception as err:
             outputs = {
                 'code': 'InvalidParameterValue',
-                'description': 'Error updating job'
+                'description': f'Error executing process: {err}'
             }
             current_status = JobStatus.failed
-            LOGGER.exception('Process failed')
+            LOGGER.exception(err)
+            self._send_failed_notification(subscriber)
+
+        if requested_response == RequestedResponse.document.value:
+            outputs = {
+                'outputs': [outputs]
+            }
+
         job_id = str(uuid.uuid1())
         return job_id, jfmt, outputs, current_status, response_headers
 

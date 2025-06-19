@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% set ptitle = data['properties'][data['title_field']] or 'Item '.format(data['id']) %}
+{% set ptitle = data['properties'][data['title_field']] or data['id'] | string %}
 {% block desc %}{{ data.get('properties',{}).get('description', {}) | string | truncate(250) }}{% endblock %}
 {% block tags %}{{ data['properties'].get('themes', [{}])[0].get('concepts', []) | join(',') }}{% endblock %}
 {# Optionally renders an img element, otherwise standard value or link rendering #}
@@ -42,10 +42,10 @@
     <section id="item">
       <div class="row">
         <div class="col-sm">
-          <!-- GA customisation ptitle to ID
-          <h1>{{ ptitle }}</h1> -->
+          {# GA customisation ptitle to ID
+          <h1>{{ ptitle }}</h1> #}
           <h1>{{ data['id'] }}</h1>
-        <!-- GA customisation PID link -->
+        {# GA customisation PID link #}
 	      <div>Persistent Identifier: <a href="{{ data['pid'] }}"> {{ data['pid'] }} </a></div>  
         </div>
       </div>
@@ -96,20 +96,20 @@
               {% for k, v in data['properties'].items() %}
                 {% if k != data['id_field'] %}
                 <tr>
-                  <td>{{ k }}</td>
+                  <td>{{ k | striptags }}</td>
                   <td>{{ render_item_value(v, 80) }}</td>
                 </tr>
                 {% endif %}
               {% endfor %}
                 <tr>
-                  <td>Links</td>
+                  <td>{% trans %}Links{% endtrans %}</td>
                   <td>
                     <ul>
                       {% for l in data['links'] %}
                       {% if l['href'] %}
                         <li><a href="{{ l['href'] }}" title="{{ l['title'] or l['href'].split('/') }}">{{ l['title'] or (l['href'].split('/') | last) | truncate( 25 ) }}</a>
                         {% if l['type'] %}
-                          <!-- Start GA customisation renaming collection/prev/next link -->
+                          {# Start GA customisation renaming collection/prev/next link #}
                           {% if l['rel'] == 'collection' %}
                             (text/html)
                           {% elif l['rel'] == 'next' %}
@@ -119,7 +119,7 @@
                           {% else %}
                             ({{ l['type'] }})
                           {% endif %}
-                          <!-- End GA customisation --> 
+                          {# End GA customisation #} 
                         {% endif %}
                         </li>
                       {% endif %}

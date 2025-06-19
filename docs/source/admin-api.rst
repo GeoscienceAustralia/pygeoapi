@@ -14,11 +14,20 @@ The API is enabled with the following server configuration:
     server:
         admin: true # boolean on whether to enable Admin API.
 
+.. note::
+
+    If you generate the OpenAPI definition after enabling the admin API, the admin routes will be exposed on ``/openapi`` 
+
+    .. image:: /_static/openapi_admin.png
+        :alt: admin routes
+        :align: center
+
+    
 Access control
 --------------
 
 It should be made clear that authentication and authorization is beyond the responsibility of pygeoapi.  This means that
-if a pygeoapi user enables the Admin API, they must provide access control explicity via another service.
+if a pygeoapi user enables the Admin API, they must provide access control explicitly via another service.
 
 pygeoapi hot reloading in gunicorn
 ----------------------------------

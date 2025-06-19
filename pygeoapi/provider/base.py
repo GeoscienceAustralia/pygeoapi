@@ -73,7 +73,7 @@ class BaseProvider:
         self.title_field = provider_def.get('title_field')
         self.properties = provider_def.get('properties', [])
         self.file_types = provider_def.get('file_types', [])
-        self.fields = {}
+        self._fields = {}
         self.filename = None
 
         # for coverage providers
@@ -85,12 +85,30 @@ class BaseProvider:
         """
         Get provider field information (names, types)
 
-        Example response: {'field1': 'string', 'field2': 'number'}}
+        Example response:
+            {'field1': {'type': 'string'}, 'field2': {'type': 'number'}}
 
-        :returns: dict of field names and their associated JSON Schema typess
+        :returns: dict of field names and their associated JSON Schema types
         """
 
         raise NotImplementedError()
+
+    @property
+    def fields(self) -> dict:
+        """
+        Store provider field information (names, types)
+
+        Example response:
+            {'field1': {'type': 'string'}, 'field2': {'type': 'number'}}
+
+        :returns: dict of dicts (field names and their
+                  associated JSON Schema definitions)
+        """
+
+        if hasattr(self, '_fields'):
+            return self._fields
+        else:
+            return self.get_fields()
 
     def get_schema(self, schema_type: SchemaType = SchemaType.item):
         """
@@ -177,24 +195,6 @@ class BaseProvider:
         :param identifier: item id
 
         :returns: `bool` of deletion result
-        """
-
-        raise NotImplementedError()
-
-    def get_coverage_domainset(self):
-        """
-        Provide coverage domainset
-
-        :returns: CIS JSON object of domainset metadata
-        """
-
-        raise NotImplementedError()
-
-    def get_coverage_rangetype(self):
-        """
-        Provide coverage rangetype
-
-        :returns: CIS JSON object of rangetype metadata
         """
 
         raise NotImplementedError()

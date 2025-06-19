@@ -31,7 +31,6 @@
 from datetime import datetime
 import logging
 
-from bson import Code
 from pymongo import MongoClient
 from pymongo import GEOSPHERE
 from pymongo import ASCENDING, DESCENDING
@@ -67,7 +66,7 @@ class MongoProvider(BaseProvider):
         self.featuredb = dbclient.get_default_database()
         self.collection = provider_def['collection']
         self.featuredb[self.collection].create_index([("geometry", GEOSPHERE)])
-        self.fields = self.get_fields()
+        self.get_fields()
 
     def get_fields(self):
         """
@@ -76,21 +75,24 @@ class MongoProvider(BaseProvider):
         :returns: dict of fields
         """
 
-        map = Code(
-            "function() { for (var key in this.properties) "
-            "{ emit(key, null); } }")
-        reduce = Code("function(key, stuff) { return null; }")
-        result = self.featuredb[self.collection].map_reduce(
-            map, reduce, "myresults")
+        if not self._fields:
+            pipeline = [
+                {"$project": {"properties": 1}},
+                {"$unwind": "$properties"},
+                {"$group": {"_id": "$properties", "count": {"$sum": 1}}},
+                {"$project": {"_id": 1}}
+            ]
 
-        # prepare a dictionary with fields
-        # set the field type to 'string'.
-        # by operating without a schema, mongo can query any data type.
-        fields = {}
-        for i in result.distinct('_id'):
-            fields[i] = {'type': 'string'}
+            result = list(self.featuredb[self.collection].aggregate(pipeline))
 
-        return (fields)
+            # prepare a dictionary with fields
+            # set the field type to 'string'.
+            # by operating without a schema, mongo can query any data type.
+            for i in result:
+                for key in result[0]['_id'].keys():
+                    self._fields[key] = {'type': 'string'}
+
+        return self._fields
 
     def _get_feature_list(self, filterObj, sortList=[], skip=0, maxitems=1,
                           skip_geometry=False):

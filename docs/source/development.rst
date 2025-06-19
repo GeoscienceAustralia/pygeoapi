@@ -20,45 +20,7 @@ Tests can be run locally as part of development workflow.  They are also run on 
 `GitHub Actions setup`_ against all commits and pull requests to the code repository.
 
 To run all tests, simply run ``pytest`` in the repository.  To run a specific test file,
-run ``pytest tests/test_api.py``, for example.
-
-
-CQL extension lifecycle
------------------------
-
-Limitations
-^^^^^^^^^^^
-
-This workflow is valid only for the `CQL-JSON` format.
-
-Schema
-^^^^^^
-
-The Common Query Language (CQL) is the part 3 of the standard OGC API - Features. This extension has its specification available at
-`OGC API - Features - Part 3: Filtering and the Common Query Language (CQL) <https://portal.ogc.org/files/96288>`_ and the schema exists in development at
-`cql.json <https://portal.ogc.org/files/96288#cql-json-schema>`_.
-
-Model generation
-^^^^^^^^^^^^^^^^
-
-pygeoapi uses a class-based Python model interface to translate the schema into Python objects defined by `pydantic <https://docs.pydantic.dev/>`_ models.
-The model is generated with the pre-processing of the schema through the utility ``datamodel-codegen``, which is part
-of the `datamodel-code-generator <https://koxudaxi.github.io/datamodel-code-generator/>`_ package:
-
-
-.. code-block:: bash
-
-   # Generate from local downloaded json schema file
-   datamodel-codegen  --input ~/Download/cql-schema.json --input-file-type jsonschema --output ./pygeoapi/models/cql_update.py --class-name CQLModel
-
-Note that datamodel-code-generator must be explicitly installed, as it is not a pygeoapi runtime dependency
-
-How to merge
-^^^^^^^^^^^^
-
-Once the new pydantic models have been generated then the content of the Python file ``cql_update.py`` can be used to replace the old classes within the ``cql.py`` file.
-Update everything above the function ``get_next_node`` and then verify if the tests for the CQL are still passing, for example ``test_post_cql_json_between_query``
-in ``tests/test_elasticsearch__provider.py``.
+run ``pytest tests/api/test_itemtypes.py``, for example.
 
 Working with Spatialite on OSX
 ------------------------------
@@ -82,7 +44,7 @@ Install Python with the option to enable SQLite extensions:
 
 .. code-block:: bash
 
-   LDFLAGS="-L/usr/local/opt/sqlite/lib -L/usr/local/opt/zlib/lib" CPPFLAGS="-I/usr/local/opt/sqlite/include -I/usr/local/opt/zlib/include" PYTHON_CONFIGURE_OPTS="--enable-loadable-sqlite-extensions" pyenv install 3.7.6
+   LDFLAGS="-L/usr/local/opt/sqlite/lib -L/usr/local/opt/zlib/lib" CPPFLAGS="-I/usr/local/opt/sqlite/include -I/usr/local/opt/zlib/include" PYTHON_CONFIGURE_OPTS="--enable-loadable-sqlite-extensions" pyenv install 3.10.12
 
 Configure SQLite from Homebrew over that one shipped with the OS:
 

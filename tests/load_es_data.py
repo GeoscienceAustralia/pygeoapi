@@ -95,5 +95,5 @@ es.options(request_timeout=90).indices.create(
 with open(sys.argv[1], encoding='utf-8') as fh:
     d = json.load(fh)
 
-    # call generator function to yield features into ES build API
+    # call generator function to yield features into ES bulk API
     helpers.bulk(es, gendata(d))
