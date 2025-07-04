@@ -1,9 +1,9 @@
 elasticsearch-dsl<8
-geoalchemy2
-pygeofilter[backend-sqlalchemy]
-pygeoif
-pygeometa
-sodapy
+geoalchemy2==0.17.1
+pygeofilter[backend-sqlalchemy]==0.3.1
+pygeoif==1.5.1
+pygeometa==0.16.1
+sodapy==2.2.0
 s3fs<=2023.6.0
 Flask>=2.2.0
-Flask-Cors
+Flask-Cors==6.0.1
