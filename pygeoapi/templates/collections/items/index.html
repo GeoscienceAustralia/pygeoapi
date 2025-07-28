@@ -173,7 +173,6 @@
     });
     {% if data['features'][0]['geometry']['type'] == 'Point' %}
     var markers = L.markerClusterGroup({
-        disableClusteringAtZoom: 9,
         chunkedLoading: true,
         chunkInterval: 500,
     });
