@@ -17,14 +17,12 @@
       <h3>{% trans %}Schema{% endtrans %}</h3>
       <table class="table table-striped table-bordered">
         <th>Name</th>
-        <th>Title</th>
-        <th>Type</th>
-        <th>Units</th>
-        <th>Values</th>
+        <th>Data Type</th>
+        <th>Comments</th>
+        <th>Mandatory</th>
       {% for qname, qinfo in data['properties'].items() %}
         <tr>
           <td>{{ qname }}</td>
-          <td>{{ qinfo['title'] }}</td>
           {% if qname == 'geometry' %}
           <td><a href="{{ qinfo['$ref'] }}">{{ qname }} </a></td>
           {% else %}
@@ -34,14 +32,8 @@
           {% endif %}
           </td>
           {% endif %}
-          <td>{{ qinfo['x-ogc-unit'] }}</td>
-          <td>
-            <ul>
-            {% for value in qinfo['enum'] %}
-              <li><i>{{ value }}</i></li>
-            {% endfor %}
-            </ul>
-          </td>
+          <td>{{ qinfo['comments'] }}</td>
+          <td style="text-align: center">{{ qinfo['mandatory'] }}</td>
         </tr>
       {% endfor %}
       </table>
