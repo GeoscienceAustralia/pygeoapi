@@ -274,14 +274,29 @@ class DatabaseConnection:
         LOGGER.debug("Table: " + table)
 
         if self.context == "query":
-            columns = dict(self._get_table_columns(schema, table))
+            #GA Customisation - Multiple columns are returned as we are populating multiple columns in the schema
+
+            type_columns = dict(self._get_table_columns(schema, table)[0])
+            comment_columns = dict(self._get_table_columns(schema, table)[1])
+            mandatory_columns = dict(self._get_table_columns(schema, table)[2])
+
+            #End GA Customisation
 
             # Populate dictionary for columns with column type
             # NOTE: we want all columns available here because they are
             #       used for filtering in the where clause, not only
             #       the ones that are returned to the client.
-            for k, v in columns.items():
-                self.fields[k.lower()] = {"type": v}
+
+            #GA Custimisation - Fields now grabs all the columns produced from the altered get_table_columns function
+            for k, v in type_columns.items():
+                comment_value = comment_columns[k]
+                mandatory_value = mandatory_columns[k]
+                self.fields[k.lower()] = {
+                                    "type": v,
+                                    "comments": comment_value,
+                                    "mandatory": mandatory_value
+                                    }
+            #End GA Customisation
 
             filtered_columns = set(self.fields)
             if self.properties:
@@ -371,20 +386,49 @@ class DatabaseConnection:
             schema = result[0]
             table = result[1]
 
+        #GA Customisation - Add multiple queries for each column required
+
         # Get table column names and types, excluding geometry
-        query_cols = """
+        query_type_cols = """
                      SELECT column_name, data_type
-                       FROM all_tab_columns
+                       FROM PUB_DATA.PIDUSER_VIEW_SCHEMA_METADATA
                       WHERE table_name = UPPER(:table_name)
                         AND owner = UPPER(:owner)
                         AND data_type != 'SDO_GEOMETRY'
                      """
+
+        # Get table column names and comments, excluding geometry
+
+        query_comment_cols = """
+                     SELECT column_name, column_comment
+                       FROM PUB_DATA.PIDUSER_VIEW_SCHEMA_METADATA
+                      WHERE table_name = UPPER(:table_name)
+                        AND owner = UPPER(:owner)
+                        AND data_type != 'SDO_GEOMETRY'
+                     """
+
+        # Get table column names and mandatory property, excluding geometry
+
+        query_mandatory_cols = """
+                     SELECT column_name, mandatory
+                       FROM PUB_DATA.PIDUSER_VIEW_SCHEMA_METADATA 
+                      WHERE table_name = UPPER(:table_name)
+                        AND owner = UPPER(:owner)
+                        AND data_type != 'SDO_GEOMETRY'
+                     """ 
         with self.conn.cursor() as cur:
-            cur.execute(query_cols, {"table_name": table, "owner": schema})
-            result = cur.fetchall()
+            #type query
+            cur.execute(query_type_cols, {"table_name": table, "owner": schema})
+            type_result = cur.fetchall()
+            #comment query
+            cur.execute(query_comment_cols, {"table_name": table, "owner": schema})
+            comment_result = cur.fetchall()
+            #mandatory query
+            cur.execute(query_mandatory_cols, {"table_name": table, "owner": schema})
+            mandatory_result = cur.fetchall()
 
-        return result
-
+        return type_result, comment_result, mandatory_result
+        #End GA Customisation
 
 class OracleProvider(BaseProvider):
     def __init__(self, provider_def):
