@@ -938,11 +938,14 @@ class OracleProvider(BaseProvider):
 
         :returns: feature id
         """
-        sql = f"SELECT {self.id_field} AS id \
+        sql = f"SELECT * \
+                FROM ( \
+                SELECT {self.id_field} AS id \
                   FROM {self.table} \
-                 WHERE ROWNUM = 1 \
-                   AND {self.id_field} < :{self.id_field} \
-                 ORDER BY {self.id_field} DESC"
+                  WHERE {self.id_field} < :{self.id_field} \
+                  ORDER BY {self.id_field} DESC \
+                ) \
+                WHERE ROWNUM = 1"
 
         bind_variables = {self.id_field: identifier}
 
