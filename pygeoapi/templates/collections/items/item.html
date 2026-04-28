@@ -100,6 +100,7 @@
                   <td>{{ render_item_value(v, 80) }}</td>
                 </tr>
                 {% endif %}
+                {# GA customisation split Gravity Station Images into separate links #}
                 {% if k == 'links_to_station_images' %}
                 <tr>
                 <td>{{ k | striptags }}</td>
@@ -111,6 +112,7 @@
                         <li><a href="{{ clean_url }}" target="_blank">{{ clean_url }}</a></li>
                       {% endif %}
                     {% endfor %}
+                  {# End GA Customisation #}
                   </ul>
                 </td>
                 </tr>
