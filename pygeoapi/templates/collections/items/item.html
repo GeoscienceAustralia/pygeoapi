@@ -94,10 +94,25 @@
                 <td>{{ data.id }}</td>
               </tr>
               {% for k, v in data['properties'].items() %}
-                {% if k != data['id_field'] %}
+                {% if k != data['id_field']  and k != 'links_to_station_images' %}
                 <tr>
                   <td>{{ k | striptags }}</td>
                   <td>{{ render_item_value(v, 80) }}</td>
+                </tr>
+                {% endif %}
+                {% if k == 'links_to_station_images' %}
+                <tr>
+                <td>{{ k | striptags }}</td>
+                <td>
+                  <ul>
+                    {% for url in v.split(' | ') %}
+                      {% set clean_url = url.strip() %}
+                      {% if clean_url %}
+                        <li><a href="{{ clean_url }}" target="_blank">{{ clean_url }}</a></li>
+                      {% endif %}
+                    {% endfor %}
+                  </ul>
+                </td>
                 </tr>
                 {% endif %}
               {% endfor %}
