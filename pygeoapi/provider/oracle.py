@@ -39,7 +39,6 @@ import oracledb
 import pyproj
 
 from pygeoapi.api import DEFAULT_STORAGE_CRS
-
 from pygeoapi.provider.base import (
     BaseProvider,
     ProviderConnectionError,
@@ -48,7 +47,6 @@ from pygeoapi.provider.base import (
     ProviderItemNotFoundError,
     ProviderQueryError,
 )
-
 from pygeoapi.util import get_crs_from_uri
 
 LOGGER = logging.getLogger(__name__)
@@ -58,20 +56,21 @@ class DatabaseConnection:
     """Database connection class to be used as 'with' statement.
     The class returns a connection object.
     """
+
     pool = None  # Class-level connection pool
     lock = threading.Lock()
 
     @classmethod
     def create_pool(cls, conn_dict, oracle_pool_min, oracle_pool_max):
         """Initialize the connection pool for the class
-           Lock is implemented before function call at __init__"""
+        Lock is implemented before function call at __init__"""
         dsn = cls._make_dsn(conn_dict)
 
         connect_kwargs = {
-            'dsn': dsn,
-            'min': oracle_pool_min,
-            'max': oracle_pool_max,
-            'increment': 1
+            "dsn": dsn,
+            "min": oracle_pool_min,
+            "max": oracle_pool_max,
+            "increment": 1,
         }
 
         # Create the pool
@@ -122,13 +121,11 @@ class DatabaseConnection:
         self.conn_dict = conn_dic
         self.table = table
         self.context = context
-        self.columns = (
-            None  # Comma sepparated string with column names (for SQL query)
-        )
+        self.columns = None  # Comma sepparated string with column names (for SQL query)
         self.properties = [item.lower() for item in properties]
         self.fields = {}  # Dict of columns. Key is col name, value is type
-        oracle_pool_min = int(os.environ.get('ORACLE_POOL_MIN', 0))
-        oracle_pool_max = int(os.environ.get('ORACLE_POOL_MAX', 0))
+        oracle_pool_min = int(os.environ.get("ORACLE_POOL_MIN", 0))
+        oracle_pool_max = int(os.environ.get("ORACLE_POOL_MAX", 0))
         # Initialize the connection pool if it hasn't been initialized
         if oracle_pool_min and oracle_pool_max:
             LOGGER.debug("Found environment variables for session pooling:")
@@ -147,8 +144,9 @@ class DatabaseConnection:
 
     @staticmethod
     def _make_dsn(conn_dict):
-        if conn_dict.get("init_oracle_client", False):
-            oracledb.init_oracle_client()
+        if conn_dict.get("init_oracle_client", True):
+            oracledb.init_oracle_client('C:\Oracle_instantclient_18_5')
+
 
         # Connect with tnsnames.ora entry and Login with Oracle Wallet
         if conn_dict.get("external_auth") == "wallet":
@@ -183,9 +181,7 @@ class DatabaseConnection:
 
         # Connect with SID
         elif "sid" in conn_dict:
-            LOGGER.debug(
-                f"Oracle connect with sid: {conn_dict['sid']}"
-            )
+            LOGGER.debug(f"Oracle connect with sid: {conn_dict['sid']}")
 
             if "host" not in conn_dict:
                 raise ProviderConnectionError(
@@ -254,9 +250,7 @@ class DatabaseConnection:
                 LOGGER.error("Couldn't acquire a connection from the pool.")
                 LOGGER.error(e)
             else:
-                LOGGER.error(
-                    f"Couldn't connect to Oracle using:{str(self.conn_dict)}"
-                )
+                LOGGER.error(f"Couldn't connect to Oracle using:{str(self.conn_dict)}")
                 LOGGER.error(e)
             raise ProviderConnectionError(e)
 
@@ -274,29 +268,29 @@ class DatabaseConnection:
         LOGGER.debug("Table: " + table)
 
         if self.context == "query":
-            #GA Customisation - Multiple columns are returned as we are populating multiple columns in the schema
+            # GA Customisation - Multiple columns are returned as we are populating multiple columns in the schema
 
             type_columns = dict(self._get_table_columns(schema, table)[0])
             comment_columns = dict(self._get_table_columns(schema, table)[1])
             mandatory_columns = dict(self._get_table_columns(schema, table)[2])
 
-            #End GA Customisation
+            # End GA Customisation
 
             # Populate dictionary for columns with column type
             # NOTE: we want all columns available here because they are
             #       used for filtering in the where clause, not only
             #       the ones that are returned to the client.
 
-            #GA Custimisation - Fields now grabs all the columns produced from the altered get_table_columns function
+            # GA Custimisation - Fields now grabs all the columns produced from the altered get_table_columns function
             for k, v in type_columns.items():
                 comment_value = comment_columns[k]
                 mandatory_value = mandatory_columns[k]
                 self.fields[k.lower()] = {
-                                    "type": v,
-                                    "comments": comment_value,
-                                    "mandatory": mandatory_value
-                                    }
-            #End GA Customisation
+                    "type": v,
+                    "comments": comment_value,
+                    "mandatory": mandatory_value,
+                }
+            # End GA Customisation
 
             filtered_columns = set(self.fields)
             if self.properties:
@@ -366,9 +360,7 @@ class DatabaseConnection:
                     result = cur.fetchone()
 
                 if result[0] == 0:
-                    raise ProviderGenericError(
-                        f"Table {schema}.{table} not found!"
-                    )
+                    raise ProviderGenericError(f"Table {schema}.{table} not found!")
 
                 else:
                     schema = "PUBLIC"
@@ -386,12 +378,12 @@ class DatabaseConnection:
             schema = result[0]
             table = result[1]
 
-        #GA Customisation - Add multiple queries for each column required
+        # GA Customisation - Add multiple queries for each column required
 
         # Get table column names and types, excluding geometry
         query_type_cols = """
                      SELECT column_name, data_type
-                       FROM PUB_DATA.PIDUSER_VIEW_SCHEMA_METADATA
+                       FROM U01558.PIDUSER_VIEW_SCHEMA_METADATA
                       WHERE table_name = UPPER(:table_name)
                         AND owner = UPPER(:owner)
                         AND data_type != 'SDO_GEOMETRY'
@@ -401,7 +393,7 @@ class DatabaseConnection:
 
         query_comment_cols = """
                      SELECT column_name, column_comment
-                       FROM PUB_DATA.PIDUSER_VIEW_SCHEMA_METADATA
+                       FROM U01558.PIDUSER_VIEW_SCHEMA_METADATA
                       WHERE table_name = UPPER(:table_name)
                         AND owner = UPPER(:owner)
                         AND data_type != 'SDO_GEOMETRY'
@@ -411,24 +403,25 @@ class DatabaseConnection:
 
         query_mandatory_cols = """
                      SELECT column_name, mandatory
-                       FROM PUB_DATA.PIDUSER_VIEW_SCHEMA_METADATA 
+                       FROM U01558.PIDUSER_VIEW_SCHEMA_METADATA 
                       WHERE table_name = UPPER(:table_name)
                         AND owner = UPPER(:owner)
                         AND data_type != 'SDO_GEOMETRY'
-                     """ 
+                     """
         with self.conn.cursor() as cur:
-            #type query
-            cur.execute(query_type_cols, {"table_name": table, "owner": schema})
+            # type query
+            cur.execute(query_type_cols, {"table_name": table, "owner": 'U01558'})
             type_result = cur.fetchall()
-            #comment query
-            cur.execute(query_comment_cols, {"table_name": table, "owner": schema})
+            # comment query
+            cur.execute(query_comment_cols, {"table_name": table, "owner": 'U01558'})
             comment_result = cur.fetchall()
-            #mandatory query
-            cur.execute(query_mandatory_cols, {"table_name": table, "owner": schema})
+            # mandatory query
+            cur.execute(query_mandatory_cols, {"table_name": table, "owner": 'U01558'})
             mandatory_result = cur.fetchall()
 
         return type_result, comment_result, mandatory_result
-        #End GA Customisation
+        # End GA Customisation
+
 
 class OracleProvider(BaseProvider):
     def __init__(self, provider_def):
@@ -456,9 +449,7 @@ class OracleProvider(BaseProvider):
 
         # SQL manipulator properties
         self.sql_manipulator = provider_def.get("sql_manipulator")
-        self.sql_manipulator_options = provider_def.get(
-            "sql_manipulator_options"
-        )
+        self.sql_manipulator_options = provider_def.get("sql_manipulator_options")
 
         # CRS properties
         storage_crs_uri = provider_def.get("storage_crs", DEFAULT_STORAGE_CRS)
@@ -616,32 +607,22 @@ class OracleProvider(BaseProvider):
         :returns: STA $orderby string
         """
         sort_map = {"+": "ASC", "-": "DESC"}
-        ret = [
-            f"{sort['property']} {sort_map[sort['order']]}" for sort in sortby
-        ]
+        ret = [f"{sort['property']} {sort_map[sort['order']]}" for sort in sortby]
 
         return f"ORDER BY {','.join(ret)}"
 
     def _get_extra_columns_expression(self):
         """Returns part of SELECT clause for extra properties"""
-        return "".join(
-            f", {e_prop}" for e_prop in self.extra_properties
-        )
+        return "".join(f", {e_prop}" for e_prop in self.extra_properties)
 
-    def _output_type_handler(
-        self, cursor, name, default_type, size, precision, scale
-    ):
+    def _output_type_handler(self, cursor, name, default_type, size, precision, scale):
         """
         Output type handler for Oracle LOB datatypes
         """
         if default_type == oracledb.DB_TYPE_CLOB:
-            return cursor.var(
-                oracledb.DB_TYPE_LONG, arraysize=cursor.arraysize
-            )
+            return cursor.var(oracledb.DB_TYPE_LONG, arraysize=cursor.arraysize)
         if default_type == oracledb.DB_TYPE_BLOB:
-            return cursor.var(
-                oracledb.DB_TYPE_LONG_RAW, arraysize=cursor.arraysize
-            )
+            return cursor.var(oracledb.DB_TYPE_LONG_RAW, arraysize=cursor.arraysize)
 
     def _get_srid_from_crs(self, crs):
         """
@@ -729,7 +710,7 @@ class OracleProvider(BaseProvider):
         #       need to split them up here
         filtered_properties = []
         extra_params = {}
-        for (key, value) in properties:
+        for key, value in properties:
             if key in self.fields.keys():
                 filtered_properties.append((key, value))
             else:
@@ -795,16 +776,14 @@ class OracleProvider(BaseProvider):
 
             # Apply the SQL manipulation plugin
             extra_params["geom"] = self.geom
-            sql_query, bind_variables = self._process_query_with_sql_manipulator_sup(   # noqa: E501
+            sql_query, bind_variables = self._process_query_with_sql_manipulator_sup(  # noqa: E501
                 db, sql_query, bind_variables, extra_params, **query_args
             )
 
             try:
                 cursor.execute(sql_query, bind_variables)
             except oracledb.Error as err:
-                LOGGER.error(
-                    f"Error executing sql_query: {sql_query}: {err}"
-                )
+                LOGGER.error(f"Error executing sql_query: {sql_query}: {err}")
                 raise ProviderQueryError()
 
             hits = cursor.fetchone()[0]
@@ -821,9 +800,7 @@ class OracleProvider(BaseProvider):
             #   Uses columns field that was generated in the Connection class
             #   or the configured columns from the Yaml file.
             props = ", ".join(
-                select_properties
-                if select_properties
-                else db.filtered_fields
+                select_properties if select_properties else db.filtered_fields
             )
 
             where_dict = self._get_where_clauses(
@@ -836,14 +813,10 @@ class OracleProvider(BaseProvider):
 
             # Get correct SRID
             if crs_transform_spec is not None:
-                source_crs = pyproj.CRS.from_wkt(
-                    crs_transform_spec.source_crs_wkt
-                )
+                source_crs = pyproj.CRS.from_wkt(crs_transform_spec.source_crs_wkt)
                 source_srid = self._get_srid_from_crs(source_crs)
 
-                target_crs = pyproj.CRS.from_wkt(
-                    crs_transform_spec.target_crs_wkt
-                )
+                target_crs = pyproj.CRS.from_wkt(crs_transform_spec.target_crs_wkt)
                 target_srid = self._get_srid_from_crs(target_crs)
             else:
                 source_srid = self._get_srid_from_crs(self.storage_crs)
@@ -868,9 +841,7 @@ class OracleProvider(BaseProvider):
                                              :target_srid).get_geojson()
                              AS geometry """
 
-                where_dict["properties"].update(
-                    {"target_srid": int(target_srid)}
-                )
+                where_dict["properties"].update({"target_srid": int(target_srid)})
 
             else:
                 geom = f", t1.{self.geom}.get_geojson() AS geometry "
@@ -899,7 +870,7 @@ class OracleProvider(BaseProvider):
             bind_variables = {**where_dict["properties"], **paging_bind}
 
             # Apply the SQL manipulation plugin
-            sql_query, bind_variables = self._process_query_with_sql_manipulator_sup(   # noqa: E501
+            sql_query, bind_variables = self._process_query_with_sql_manipulator_sup(  # noqa: E501
                 db, sql_query, bind_variables, extra_params, **query_args
             )
 
@@ -1006,14 +977,10 @@ class OracleProvider(BaseProvider):
 
             # Get correct SRIDs
             if crs_transform_spec is not None:
-                source_crs = pyproj.CRS.from_wkt(
-                    crs_transform_spec.source_crs_wkt
-                )
+                source_crs = pyproj.CRS.from_wkt(crs_transform_spec.source_crs_wkt)
                 source_srid = self._get_srid_from_crs(source_crs)
 
-                target_crs = pyproj.CRS.from_wkt(
-                    crs_transform_spec.target_crs_wkt
-                )
+                target_crs = pyproj.CRS.from_wkt(crs_transform_spec.target_crs_wkt)
                 target_srid = self._get_srid_from_crs(target_crs)
 
             else:
@@ -1154,11 +1121,7 @@ class OracleProvider(BaseProvider):
 
             # Filter properties to get only columns who are
             # in the column list
-            columns = [
-                col
-                for col in columns
-                if col.lower() in db.filtered_fields
-            ]
+            columns = [col for col in columns if col.lower() in db.filtered_fields]
 
             # Filter function to get only properties who are
             # in the column list
@@ -1251,11 +1214,7 @@ class OracleProvider(BaseProvider):
 
             # Filter properties to get only columns who are
             # in the column list
-            columns = [
-                col
-                for col in columns
-                if col.lower() in db.filtered_fields
-            ]
+            columns = [col for col in columns if col.lower() in db.filtered_fields]
 
             # Filter function to get only properties who are
             # in the column list
@@ -1406,9 +1365,7 @@ class OracleProvider(BaseProvider):
         return obj
 
 
-def _class_factory(
-    module_class_string, super_cls: Optional[type] = None, **kwargs
-):
+def _class_factory(module_class_string, super_cls: Optional[type] = None, **kwargs):
     """
     Factory function for class instances.
     Used for dynamic loading of the SQL manipulation class.
@@ -1423,9 +1380,9 @@ def _class_factory(
     LOGGER.debug(f"reading class {class_name} from module {module_name}")
     cls = getattr(module, class_name)
     if super_cls is not None:
-        assert issubclass(
-            cls, super_cls
-        ), f"class {class_name} should inherit from {super_cls.__name__}"
+        assert issubclass(cls, super_cls), (
+            f"class {class_name} should inherit from {super_cls.__name__}"
+        )
     LOGGER.debug(f"initialising {class_name} with params {kwargs}")
     obj = cls(**kwargs)
     return obj
