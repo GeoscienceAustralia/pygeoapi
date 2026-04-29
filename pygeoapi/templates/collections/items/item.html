@@ -94,6 +94,8 @@
                 <td>{{ data.id }}</td>
               </tr>
               {% for k, v in data['properties'].items() %}
+                {# The following if logic assumes there will not be a "links_to_station_images" column outside of gravity stations dataset #}
+                {# Revisit this if statement logic if that somehow ever changes}
                 {% if k != data['id_field']  and k != 'links_to_station_images' %}
                 <tr>
                   <td>{{ k | striptags }}</td>
