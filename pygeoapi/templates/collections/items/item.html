@@ -94,10 +94,29 @@
                 <td>{{ data.id }}</td>
               </tr>
               {% for k, v in data['properties'].items() %}
-                {% if k != data['id_field'] %}
+                {# The following if logic assumes there will not be a "links_to_station_images" column outside of gravity stations dataset #}
+                {# Revisit this if statement logic if that somehow ever changes #}
+                {% if k != data['id_field']  and k != 'links_to_station_images' %}
                 <tr>
                   <td>{{ k | striptags }}</td>
                   <td>{{ render_item_value(v, 80) }}</td>
+                </tr>
+                {% endif %}
+                {# GA customisation split Gravity Station Images into separate links #}
+                {% if k == 'links_to_station_images' %}
+                <tr>
+                <td>{{ k | striptags }}</td>
+                <td>
+                  <ul>
+                    {% for url in v.split(' | ') %}
+                      {% set clean_url = url.strip() %}
+                      {% if clean_url %}
+                        <li><a href="{{ clean_url }}" target="_blank">{{ clean_url }}</a></li>
+                      {% endif %}
+                    {% endfor %}
+                  {# End GA Customisation #}
+                  </ul>
+                </td>
                 </tr>
                 {% endif %}
               {% endfor %}
