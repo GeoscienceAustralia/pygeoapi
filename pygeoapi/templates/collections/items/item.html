@@ -155,6 +155,7 @@
 
 {% block extrafoot %}
     <script>
+    {#GA customisation - coordinates on L.map default to australia instead of Canada #}
     var map = L.map('items-map').setView([{{ -25 }}, {{ 135 }}], 3.25);
     map.addLayer(new L.TileLayer(
         '{{ config['server']['map']['url'] }}', {

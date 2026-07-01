@@ -171,6 +171,8 @@
             layer.bindPopup(html);
         }
     });
+    {# GA Customisation - disableClusteringAtZoom: 9 parameter removed from L.markerClusterGroup. This is to fix issues with overlapping geometric points. (DAT-1053) #}
+
     {% if data['features'][0]['geometry']['type'] == 'Point' %}
     var markers = L.markerClusterGroup({
         chunkedLoading: true,
