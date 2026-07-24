@@ -938,6 +938,7 @@ class OracleProvider(BaseProvider):
 
         :returns: feature id
         """
+        #GA Customisation - Correction to the SQL logic for retrieving the previous record (DAT-1039)
         sql = f"SELECT * \
                 FROM ( \
                 SELECT {self.id_field} AS id \
