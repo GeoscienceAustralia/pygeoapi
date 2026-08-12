@@ -276,6 +276,17 @@ def jsonldify_geometry(feature: dict) -> None:
     feature['type'] = 'schema:Place'
 
     geo = feature.get('geometry')
+
+    # GA Customisation #
+    # Ensure that point types with a null z-coordinate are modified to only parse their x & y coordinates to the shapely conversion function. 
+    # This prevents jsonld errors from occurring, see DAT-1452 for more information. 
+    
+    if geo['type'] == 'Point':
+        geo_coords = geo['coordinates']
+        if len(geo_coords) == 3 and geo_coords[-1] is None:
+            geo = {**geo, 'coordinates': geo_coords[:2]}
+    # End GA Customisation #
+
     geom = shape(geo)
 
     # GeoJSON geometry
