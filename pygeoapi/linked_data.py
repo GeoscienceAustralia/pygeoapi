@@ -278,13 +278,13 @@ def jsonldify_geometry(feature: dict) -> None:
     geo = feature.get('geometry')
 
     # GA Customisation #
-    # Ensure that point types with a null z-coordinate are modified to only parse their x & y coordinates to the shapely conversion function. 
+    # Ensure that point types with a null z-coordinate are modified parse an established unknown placeholder value of "-99999". 
     # This prevents jsonld errors from occurring, see DAT-1452 for more information. 
     if geo['type'] == 'Point':
         geo_coords = geo['coordinates']
         if len(geo_coords) == 3 and geo_coords[-1] is None:
             geo = { **geo,'coordinates': [*geo['coordinates'][:-1], -99999]}
-            feature['geometry'] = geo #this also needs to be updated for both the wkt and the geometry to have -99999
+            feature['geometry'] = geo #this is also updated so that both the wkt and the geometry have the value -99999
     # End GA Customisation #
 
     geom = shape(geo)
