@@ -1070,6 +1070,8 @@ class OracleProvider(BaseProvider):
                 cursor.execute(sql_query, bind_variables)
             except oracledb.Error as err:
                 LOGGER.error(f"Error executing sql_query: {sql_query}")
+                #GA Customisation - Bind Variables to see what the "in_id" is
+                LOGGER.error(f"Bind Variables: {bind_variables}")
                 LOGGER.error(err)
                 raise ProviderQueryError()
 
