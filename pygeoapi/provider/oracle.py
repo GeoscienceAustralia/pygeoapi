@@ -51,6 +51,20 @@ from pygeoapi.util import get_crs_from_uri
 
 LOGGER = logging.getLogger(__name__)
 
+debug_logger = logging.getLogger("pygeoapi.oracle.debug")
+file_handler = logging.FileHandler(
+    "C:\\W10DEV\\Github Desktop\\pygeoapi\\oracle_debug.log"
+)
+
+file_handler.setLevel(logging.DEBUG)
+
+formatter = logging.Formatter(
+    "%(asctime)s - %(levelname)s - %(message)s"
+)
+
+file_handler.setFormatter(formatter)
+debug_logger.addHandler(file_handler)
+
 
 class DatabaseConnection:
     """Database connection class to be used as 'with' statement.
@@ -144,8 +158,8 @@ class DatabaseConnection:
 
     @staticmethod
     def _make_dsn(conn_dict):
-        print(oracledb.__version__)
-        print(oracledb.is_thin_mode())
+        #print(oracledb.__version__)
+        #print(oracledb.is_thin_mode())
         if conn_dict.get("init_oracle_client", True):
             oracledb.init_oracle_client('C:\Oracle_instantclient_18_5')
 
@@ -1033,15 +1047,71 @@ class OracleProvider(BaseProvider):
 
             LOGGER.debug(f"SQL Query: {sql_query}")
             LOGGER.debug(f"Identifier: {identifier}")
-
+            '''
             try:
                 cursor.execute(sql_query, bind_variables)
             except oracledb.Error as err:
                 LOGGER.error(f"Error executing sql_query: {sql_query}")
                 LOGGER.error(err)
                 raise ProviderQueryError()
-
+            '''
             #GA Customisation - Handle ORA-13199 errors
+
+            try:
+                cursor.execute(sql_query, bind_variables)
+
+            except oracledb.DatabaseError as e:
+                if "ORA-13199" in str(e) and "lnxn2cg()" in str(e):
+
+                    # Use the same SELECT columns, but retrieve the raw
+                    # SDO_GEOMETRY instead of calling get_geojson().
+
+                    if source_srid != target_srid:
+                        geom_sql = f""",
+                                    SDO_CS.TRANSFORM(t1.{self.geom}, :target_srid) AS geometry """
+
+                    else:
+                        geom_sql = f""",
+                                    t1.{self.geom} AS geometry """
+                    
+                    # Rebuild the query because geom_sql has changed
+
+                    sql_query = f"""SELECT {columns}
+                        {self._get_extra_columns_expression()}
+                        {geom_sql}
+                        FROM {self.table} t1
+                        WHERE {self.id_field} = :in_id"""
+
+                    cursor.execute(sql_query, bind_variables)
+
+                     # Get the single record
+                    record = cursor.fetchone()
+
+                    # Modify the raw SDO_GEOMETRY
+                    geometry_index = next(
+                        i for i, column in enumerate(cursor.description)
+                        if column[0].lower() == "geometry"
+                    )
+
+                    record = list(record)
+                    geometry = record[geometry_index]
+
+                    # Replace NULL ordinates with -99999
+                    for i in range(len(geometry.SDO_ORDINATES)):
+                        if geometry.SDO_ORDINATES[i] is None:
+                            geometry.SDO_ORDINATES[i] = -99999
+
+                    # Convert repaired geometry to GeoJSON
+                    record[geometry_index] = geometry.get_geojson()
+
+                    # Put it back in the form expected by the existing code
+                    record = tuple(record)
+                    geometry = record[geometry_index]
+
+                else:
+                    raise
+
+            '''
             #Converts bad 3d linestring geometries to 2d geometries 
 
             try:
@@ -1082,7 +1152,7 @@ class OracleProvider(BaseProvider):
                 else:
                     raise
             #End GA Customisation
-
+            '''
             # Convert row resultset to dictionary
             columns = [col[0] for col in cursor.description]
             cursor.rowfactory = lambda *args: dict(zip(columns, args))
