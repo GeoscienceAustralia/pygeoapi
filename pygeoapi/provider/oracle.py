@@ -990,7 +990,7 @@ class OracleProvider(BaseProvider):
             cursor = db.conn.cursor()
 
             crs_dict = {}
-
+            print("Hi")
             # Get correct SRIDs
             if crs_transform_spec is not None:
                 source_crs = pyproj.CRS.from_wkt(crs_transform_spec.source_crs_wkt)
@@ -1060,56 +1060,92 @@ class OracleProvider(BaseProvider):
             try:
                 cursor.execute(sql_query, bind_variables)
 
-            except oracledb.DatabaseError as e:
-                if "ORA-13199" in str(e) and "lnxn2cg()" in str(e):
-
-                    # Use the same SELECT columns, but retrieve the raw
-                    # SDO_GEOMETRY instead of calling get_geojson().
-
-                    if source_srid != target_srid:
-                        geom_sql = f""",
-                                    SDO_CS.TRANSFORM(t1.{self.geom}, :target_srid) AS geometry """
-
-                    else:
-                        geom_sql = f""",
-                                    t1.{self.geom} AS geometry """
-                    
-                    # Rebuild the query because geom_sql has changed
-
-                    sql_query = f"""SELECT {columns}
-                        {self._get_extra_columns_expression()}
-                        {geom_sql}
-                        FROM {self.table} t1
-                        WHERE {self.id_field} = :in_id"""
-
-                    cursor.execute(sql_query, bind_variables)
-
-                     # Get the single record
-                    record = cursor.fetchone()
-
-                    # Modify the raw SDO_GEOMETRY
-                    geometry_index = next(
-                        i for i, column in enumerate(cursor.description)
-                        if column[0].lower() == "geometry"
+            except oracledb.Error as err:
+                error_text = str(err)
+                print("Hi Except")
+                #if "ORA-13199" in error_text and "lnxn2cg()" in error_text:
+                if True:
+                    print(
+                        f"ORA-13199 for identifier {identifier}; "
+                        "retrying with raw geometry"
                     )
 
-                    record = list(record)
-                    geometry = record[geometry_index]
+                    fallback_geom_sql = f", t1.{self.geom} AS geometry "
 
-                    # Replace NULL ordinates with -99999
-                    for i in range(len(geometry.SDO_ORDINATES)):
-                        if geometry.SDO_ORDINATES[i] is None:
-                            geometry.SDO_ORDINATES[i] = -99999
+                    fallback_sql_query = f"""SELECT {columns}
+                                            {self._get_extra_columns_expression()}
+                                            {fallback_geom_sql}
+                                            FROM {self.table} t1
+                                            WHERE {self.id_field} = :in_id"""
 
-                    # Convert repaired geometry to GeoJSON
-                    record[geometry_index] = geometry.get_geojson()
+                    cursor.execute(fallback_sql_query, bind_variables)
 
-                    # Put it back in the form expected by the existing code
-                    record = tuple(record)
-                    geometry = record[geometry_index]
+                    # Fetch the single result using the same mechanism
+                    # as the normal query.
+                    columns = [col[0] for col in cursor.description]
+                    cursor.rowfactory = lambda *args: dict(zip(columns, args))
 
-                else:
-                    raise
+                    results = cursor.fetchall()
+
+
+                    row_data = results[0]
+
+                    geometry = row_data["GEOM_GDA94"]
+                    ordinates = geometry.SDO_ORDINATES
+
+                    for i in range(ordinates.size()):
+                        if ordinates.getelement(i) is None:
+                            ordinates.setelement(i, -99999)
+
+                        row_data["GEOM_GDA94"] = geometry.get_geojson()
+
+                    geojson_cursor = db.conn.cursor()
+
+                    geojson_var = geojson_cursor.var(oracledb.DB_TYPE_CLOB)
+
+                    geojson_cursor.execute(
+                        """
+                        DECLARE
+                            v_geometry MDSYS.SDO_GEOMETRY;
+                        BEGIN
+                            v_geometry := :geometry;
+                            :geojson := v_geometry.get_geojson();
+                        END;
+                        """,
+                        geometry=geometry,
+                        geojson=geojson_var,
+                    )
+
+                    #geojson = geojson_cursor.bindvars["geojson"].getvalue()
+
+                    geojson = geojson_var.getvalue()
+
+                    if hasattr(geojson, "read"):
+                        geojson = geojson.read()
+
+                    row_data["GEOMETRY"] = geojson
+
+                    feature = self._response_feature(row_data)
+
+                    if feature:
+                        previous_id = self._get_previous(cursor, identifier)
+                        if previous_id:
+                            feature["prev"] = previous_id
+
+                        next_id = self._get_next(cursor, identifier)
+                        if next_id:
+                            feature["next"] = next_id
+
+                        return feature
+
+                    else:
+                        err = f"item identifier {identifier} not found"
+                        LOGGER.error(err)
+                        raise ProviderItemNotFoundError(err)
+
+                LOGGER.error(f"Error executing sql_query: {sql_query}")
+                LOGGER.error(err)
+                raise ProviderQueryError()
 
             '''
             #Converts bad 3d linestring geometries to 2d geometries 
