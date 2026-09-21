@@ -426,16 +426,13 @@ class DatabaseConnection:
                      """
         with self.conn.cursor() as cur:
             # type query
-            #cur.execute(query_type_cols, {"table_name": table, "owner": 'U01558'})
-            cur.execute(query_type_cols, {"table_name": table, "owner": schema})
+            cur.execute(query_type_cols, {"table_name": table, "owner": 'U01558'})
             type_result = cur.fetchall()
             # comment query
-            #cur.execute(query_comment_cols, {"table_name": table, "owner": 'U01558'})
-            cur.execute(query_comment_cols, {"table_name": table, "owner": schema})
+            cur.execute(query_comment_cols, {"table_name": table, "owner": 'U01558'})
             comment_result = cur.fetchall()
             # mandatory query
-            #cur.execute(query_mandatory_cols, {"table_name": table, "owner": 'U01558'})
-            cur.execute(query_comment_cols, {"table_name": table, "owner": schema})
+            cur.execute(query_mandatory_cols, {"table_name": table, "owner": 'U01558'})
             mandatory_result = cur.fetchall()
 
         return type_result, comment_result, mandatory_result
