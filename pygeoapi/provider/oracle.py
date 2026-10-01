@@ -990,7 +990,6 @@ class OracleProvider(BaseProvider):
             cursor = db.conn.cursor()
 
             crs_dict = {}
-            print("Hi")
             # Get correct SRIDs
             if crs_transform_spec is not None:
                 source_crs = pyproj.CRS.from_wkt(crs_transform_spec.source_crs_wkt)
@@ -1056,52 +1055,79 @@ class OracleProvider(BaseProvider):
                 raise ProviderQueryError()
             '''
             #GA Customisation - Handle ORA-13199 errors
-
+            
             try:
                 cursor.execute(sql_query, bind_variables)
 
+                # Convert row resultset to dictionary
+                columns = [col[0] for col in cursor.description]
+                cursor.rowfactory = lambda *args: dict(zip(columns, args))
+
+                results = cursor.fetchall()
+
             except oracledb.Error as err:
                 error_text = str(err)
-                print("Hi Except")
-                #if "ORA-13199" in error_text and "lnxn2cg()" in error_text:
-                if True:
+
+                if "ORA-13199" in error_text and "lnxn2cg()" in error_text:
                     print(
                         f"ORA-13199 for identifier {identifier}; "
                         "retrying with raw geometry"
                     )
 
+                    # Rebuild the original SELECT columns here.
+                    # The `columns` variable has already been changed to a
+                    # list of result column names above.
+                    fallback_columns = ", ".join(db.filtered_fields)
+
+                    # Select the raw Oracle geometry instead of calling get_geojson().
                     fallback_geom_sql = f", t1.{self.geom} AS geometry "
 
-                    fallback_sql_query = f"""SELECT {columns}
+                    fallback_sql_query = f"""SELECT {fallback_columns}
                                             {self._get_extra_columns_expression()}
                                             {fallback_geom_sql}
                                             FROM {self.table} t1
                                             WHERE {self.id_field} = :in_id"""
 
-                    cursor.execute(fallback_sql_query, bind_variables)
+                    # Use a new cursor because the original cursor failed during fetch.
+                    fallback_cursor = db.conn.cursor()
 
-                    # Fetch the single result using the same mechanism
-                    # as the normal query.
-                    columns = [col[0] for col in cursor.description]
-                    cursor.rowfactory = lambda *args: dict(zip(columns, args))
+                    fallback_cursor.execute(
+                        fallback_sql_query,
+                        bind_variables
+                    )
 
-                    results = cursor.fetchall()
+                    fallback_result_columns = [
+                        col[0] for col in fallback_cursor.description
+                    ]
 
+                    fallback_cursor.rowfactory = (
+                        lambda *args: dict(zip(fallback_result_columns, args))
+                    )
 
-                    row_data = results[0]
+                    fallback_results = fallback_cursor.fetchall()
 
-                    geometry = row_data["GEOM_GDA94"]
+                    if not fallback_results:
+                        err = f"item identifier {identifier} not found"
+                        LOGGER.error(err)
+                        raise ProviderItemNotFoundError(err)
+
+                    row_data = fallback_results[0]
+
+                    # Get the raw Oracle geometry.
+                    geometry = row_data["GEOMETRY"]
+
+                    # Replace NULL ordinates with the sentinel value.
                     ordinates = geometry.SDO_ORDINATES
 
                     for i in range(ordinates.size()):
                         if ordinates.getelement(i) is None:
                             ordinates.setelement(i, -99999)
 
-                        row_data["GEOM_GDA94"] = geometry.get_geojson()
-
+                    # Ask Oracle to convert the repaired geometry to GeoJSON.
                     geojson_cursor = db.conn.cursor()
-
-                    geojson_var = geojson_cursor.var(oracledb.DB_TYPE_CLOB)
+                    geojson_var = geojson_cursor.var(
+                        oracledb.DB_TYPE_CLOB
+                    )
 
                     geojson_cursor.execute(
                         """
@@ -1116,23 +1142,30 @@ class OracleProvider(BaseProvider):
                         geojson=geojson_var,
                     )
 
-                    #geojson = geojson_cursor.bindvars["geojson"].getvalue()
-
                     geojson = geojson_var.getvalue()
 
                     if hasattr(geojson, "read"):
                         geojson = geojson.read()
 
+                    # _response_feature() expects the generated GeoJSON here.
                     row_data["GEOMETRY"] = geojson
 
                     feature = self._response_feature(row_data)
 
                     if feature:
-                        previous_id = self._get_previous(cursor, identifier)
+                        previous_id = self._get_previous(
+                            fallback_cursor,
+                            identifier
+                        )
+
                         if previous_id:
                             feature["prev"] = previous_id
 
-                        next_id = self._get_next(cursor, identifier)
+                        next_id = self._get_next(
+                            fallback_cursor,
+                            identifier
+                        )
+
                         if next_id:
                             feature["next"] = next_id
 
@@ -1143,52 +1176,11 @@ class OracleProvider(BaseProvider):
                         LOGGER.error(err)
                         raise ProviderItemNotFoundError(err)
 
-                LOGGER.error(f"Error executing sql_query: {sql_query}")
+                LOGGER.error(f"Error executing/fetching sql_query: {sql_query}")
                 LOGGER.error(err)
                 raise ProviderQueryError()
-
-            '''
-            #Converts bad 3d linestring geometries to 2d geometries 
-
-            try:
-                cursor.execute(sql_query, bind_variables)
-
-            except oracledb.Error as err:
-                error_text = str(err)
-
-                if "ORA-13199" in error_text and "lnxn2cg()" in error_text:
-                    LOGGER.error(
-                        "Oracle lnxn2cg() error for ID %s; retrying geometry as 2D",
-                        bind_variables.get("in_id")
-                    )
-
-                    if source_srid != target_srid:
-                        geom_sql = f""",
-                            SDO_UTIL.TO_GEOJSON(
-                                SDO_CS.MAKE_2D(
-                                    SDO_CS.TRANSFORM(t1.{self.geom}, :target_srid)
-                                )
-                            ) AS geometry """
-
-                    else:
-                        geom_sql = f""",
-                            SDO_UTIL.TO_GEOJSON(
-                                SDO_CS.MAKE_2D(t1.{self.geom})
-                            ) AS geometry """
-
-                    # Rebuild the query because geom_sql has changed
-                    sql_query = f"""SELECT {columns}
-                                    {self._get_extra_columns_expression()}
-                                    {geom_sql}
-                                    FROM {self.table} t1
-                                    WHERE {self.id_field} = :in_id"""
-
-                    cursor.execute(sql_query, bind_variables)
-
-                else:
-                    raise
             #End GA Customisation
-            '''
+
             # Convert row resultset to dictionary
             columns = [col[0] for col in cursor.description]
             cursor.rowfactory = lambda *args: dict(zip(columns, args))
