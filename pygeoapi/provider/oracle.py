@@ -1065,7 +1065,134 @@ class OracleProvider(BaseProvider):
 
             LOGGER.debug(f"SQL Query: {sql_query}")
             LOGGER.debug(f"Identifier: {identifier}")
+            
+            #GA Customisation - Handle ORA-13199 errors
+            
+            try:
+                cursor.execute(sql_query, bind_variables)
 
+                # Convert row resultset to dictionary
+                columns = [col[0] for col in cursor.description]
+                cursor.rowfactory = lambda *args: dict(zip(columns, args))
+
+                results = cursor.fetchall()
+
+            except oracledb.Error as err:
+                error_text = str(err)
+
+                if "ORA-13199" in error_text and "lnxn2cg()" in error_text:
+                    print(
+                        f"ORA-13199 for identifier {identifier}; "
+                        "retrying with raw geometry"
+                    )
+
+                    # Rebuild the original SELECT columns here.
+                    # The `columns` variable has already been changed to a
+                    # list of result column names above.
+                    fallback_columns = ", ".join(db.filtered_fields)
+
+                    # Select the raw Oracle geometry instead of calling get_geojson().
+                    fallback_geom_sql = f", t1.{self.geom} AS geometry "
+
+                    fallback_sql_query = f"""SELECT {fallback_columns}
+                                            {self._get_extra_columns_expression()}
+                                            {fallback_geom_sql}
+                                            FROM {self.table} t1
+                                            WHERE {self.id_field} = :in_id"""
+
+                    # Use a new cursor because the original cursor failed during fetch.
+                    fallback_cursor = db.conn.cursor()
+
+                    fallback_cursor.execute(
+                        fallback_sql_query,
+                        bind_variables
+                    )
+
+                    fallback_result_columns = [
+                        col[0] for col in fallback_cursor.description
+                    ]
+
+                    fallback_cursor.rowfactory = (
+                        lambda *args: dict(zip(fallback_result_columns, args))
+                    )
+
+                    fallback_results = fallback_cursor.fetchall()
+
+                    if not fallback_results:
+                        err = f"item identifier {identifier} not found"
+                        LOGGER.error(err)
+                        raise ProviderItemNotFoundError(err)
+
+                    row_data = fallback_results[0]
+
+                    # Get the raw Oracle geometry.
+                    geometry = row_data["GEOMETRY"]
+
+                    # Replace NULL ordinates with the sentinel value.
+                    ordinates = geometry.SDO_ORDINATES
+
+                    for i in range(ordinates.size()):
+                        if ordinates.getelement(i) is None:
+                            ordinates.setelement(i, -99999)
+
+                    # Ask Oracle to convert the repaired geometry to GeoJSON.
+                    geojson_cursor = db.conn.cursor()
+                    geojson_var = geojson_cursor.var(
+                        oracledb.DB_TYPE_CLOB
+                    )
+
+                    geojson_cursor.execute(
+                        """
+                        DECLARE
+                            v_geometry MDSYS.SDO_GEOMETRY;
+                        BEGIN
+                            v_geometry := :geometry;
+                            :geojson := v_geometry.get_geojson();
+                        END;
+                        """,
+                        geometry=geometry,
+                        geojson=geojson_var,
+                    )
+
+                    geojson = geojson_var.getvalue()
+
+                    if hasattr(geojson, "read"):
+                        geojson = geojson.read()
+
+                    # _response_feature() expects the generated GeoJSON here.
+                    row_data["GEOMETRY"] = geojson
+
+                    feature = self._response_feature(row_data)
+
+                    if feature:
+                        previous_id = self._get_previous(
+                            fallback_cursor,
+                            identifier
+                        )
+
+                        if previous_id:
+                            feature["prev"] = previous_id
+
+                        next_id = self._get_next(
+                            fallback_cursor,
+                            identifier
+                        )
+
+                        if next_id:
+                            feature["next"] = next_id
+
+                        return feature
+
+                    else:
+                        err = f"item identifier {identifier} not found"
+                        LOGGER.error(err)
+                        raise ProviderItemNotFoundError(err)
+
+                LOGGER.error(f"Error executing/fetching sql_query: {sql_query}")
+                LOGGER.error(err)
+                raise ProviderQueryError()
+            #End GA Customisation
+            
             try:
                 cursor.execute(sql_query, bind_variables)
             except oracledb.Error as err:
