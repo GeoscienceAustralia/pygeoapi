@@ -1087,8 +1087,6 @@ class OracleProvider(BaseProvider):
                     )
 
                     # Rebuild the original SELECT columns here.
-                    # The `columns` variable has already been changed to a
-                    # list of result column names above.
                     fallback_columns = ", ".join(db.filtered_fields)
 
                     # Select the raw Oracle geometry instead of calling get_geojson().
@@ -1128,7 +1126,7 @@ class OracleProvider(BaseProvider):
                     # Get the raw Oracle geometry.
                     geometry = row_data["GEOMETRY"]
 
-                    # Replace NULL ordinates with the sentinel value.
+                    # Replace NULL ordinates with -99999 (GA Code for unknown value).
                     ordinates = geometry.SDO_ORDINATES
 
                     for i in range(ordinates.size()):
