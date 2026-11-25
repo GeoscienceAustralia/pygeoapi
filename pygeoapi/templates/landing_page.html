@@ -78,6 +78,7 @@
         <a href="{{ config['server']['url'] }}/processes?f=html">{% trans %}View the processes in this service{% endtrans %}</a>
       </p>
   </section>
+  {% if data['jobs'] %}
   <section id="jobs">
       <h2>{% trans %}Jobs{% endtrans %}</h2>
       <p>

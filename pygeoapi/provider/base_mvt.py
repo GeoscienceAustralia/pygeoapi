@@ -3,7 +3,7 @@
 # Authors: Francesco Bartoli <xbartolone@gmail.com>
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2020 Francesco Bartoli
+# Copyright (c) 2025 Francesco Bartoli
 # Copyright (c) 2023 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
@@ -71,14 +71,18 @@ class BaseMVTProvider(BaseTileProvider):
         raise NotImplementedError()
 
     def get_tiling_schemes(self):
+        if self.schemes:
+            LOGGER.debug('Using custom TMS definition')
+            tile_matrix_set_links = [
+                item.value for item in TileMatrixSetEnum
+                if item.value.tileMatrixSet in self.schemes]
 
-        tile_matrix_set_links_list = [
+        else:
+            LOGGER.debug('Using default TMS definitions')
+            tile_matrix_set_links = [
                 TileMatrixSetEnum.WORLDCRS84QUAD.value,
                 TileMatrixSetEnum.WEBMERCATORQUAD.value
             ]
-        tile_matrix_set_links = [
-            item for item in tile_matrix_set_links_list
-            if item.tileMatrixSet in self.options['schemes']]
 
         return tile_matrix_set_links
 
@@ -95,7 +99,8 @@ class BaseMVTProvider(BaseTileProvider):
         :returns: `dict` of item tile service
         """
 
-        url = urlparse(self.data)
+        # self.data will be a dict when using MVTPostgresProvider
+        url = urlparse(self.data) if isinstance(self.data, str) else urlparse('/') # noqa
         baseurl = baseurl or f'{url.scheme}://{url.netloc}'
         # @TODO: support multiple types
         tile_type = tile_type or self.format_type
@@ -214,7 +219,7 @@ class BaseMVTProvider(BaseTileProvider):
                                              tileset, title, description,
                                              keywords, **kwargs)
         else:
-            raise NotImplementedError(f"_{metadata_format.upper()}_ is not supported") # noqa
+            raise NotImplementedError(f"_{metadata_format.upper()}_ is not supported")  # noqa
 
     def get_tms_links(self):
         """
@@ -248,45 +253,3 @@ class BaseMVTProvider(BaseTileProvider):
             ]
         }
         return links
-
-    def get_tilematrixset(self, tileMatrixSetId):
-        """
-        Get tilematrixset
-
-        :param tileMatrixSetId: tilematrixsetid str
-
-        :returns: tilematrixset enum object
-        """
-
-        enums = [e.value for e in TileMatrixSetEnum]
-        enum = None
-
-        try:
-            for e in enums:
-                if tileMatrixSetId == e.tileMatrixSet:
-                    enum = e
-            if not enum:
-                raise ValueError('could not find this tilematrixset')
-            return enum
-
-        except ValueError as err:
-            LOGGER.error(err)
-
-    def is_in_limits(self, tilematrixset, z, x, y):
-        """
-        Is within the limits of the tilematrixset
-
-        :param z: tilematrix
-        :param x: x
-        :param y: y
-
-        :returns: wether this tile is within the tile matrix
-        set limits (Boolean)
-        """
-
-        try:
-            if int(x) < tilematrixset.tileMatrices[int(z)]['matrixWidth'] and int(y) < tilematrixset.tileMatrices[int(z)]['matrixHeight']: # noqa
-                return True
-            return False
-        except ValueError as err:
-            LOGGER.error(err)

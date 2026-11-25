@@ -2,7 +2,8 @@
 #
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2022 Tom Kralidis
+# Copyright (c) 2026 Joana Simoes
+# Copyright (c) 2026 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -30,8 +31,13 @@
 import logging
 from urllib.parse import urlencode
 
+from pyproj.exceptions import CRSError
+
+from pygeoapi.crs import get_curie
+
 import pyproj
 import requests
+
 
 from pygeoapi.provider.base import BaseProvider, ProviderQueryError
 
@@ -41,10 +47,7 @@ OUTPUT_FORMATS = {
     'png': 'image/png'
 }
 
-CRS_CODES = {
-    4326: 'EPSG:4326',
-    'http://www.opengis.net/def/crs/EPSG/0/3857': 'EPSG:3857'
-}
+DEFAULT_WMS_CRS = 'CRS:84'
 
 
 class WMSFacadeProvider(BaseProvider):
@@ -63,9 +66,9 @@ class WMSFacadeProvider(BaseProvider):
 
         LOGGER.debug(f'pyproj version: {pyproj.__version__}')
 
-    def query(self, style=None, bbox=[-180, -90, 180, 90], width=500,
-              height=300, crs=4326, datetime_=None, transparent=True,
-              format_='png'):
+    def query(self, style=None, bbox=[-180, -90, 180, 90],
+              width=500, height=300, crs=DEFAULT_WMS_CRS, datetime_=None,
+              transparent=True, format_='png', **kwargs):
         """
         Generate map
 
@@ -82,32 +85,23 @@ class WMSFacadeProvider(BaseProvider):
         :returns: `bytes` of map image
         """
 
+        LOGGER.debug(f'bbox: {bbox}')
+
         self._transparent = 'TRUE'
 
         version = self.options.get('version', '1.3.0')
 
-        if crs in [4326, 'CRS;84'] and version == '1.3.0':
-            LOGGER.debug('Swapping 4326 axis order to WMS 1.3 mode (yx)')
-            bbox2 = ','.join(str(c) for c in
-                             [bbox[1], bbox[0], bbox[3], bbox[2]])
-        else:
-            LOGGER.debug('Reprojecting coordinates')
-            LOGGER.debug(f'Output CRS: {CRS_CODES[crs]}')
+        try:
+            wms_crs = get_curie(crs)
+        except CRSError:
+            wms_crs = DEFAULT_WMS_CRS
 
-            src_crs = pyproj.CRS.from_string('epsg:4326')
-            dest_crs = pyproj.CRS.from_string(CRS_CODES[crs])
-
-            transformer = pyproj.Transformer.from_crs(src_crs, dest_crs,
-                                                      always_xy=True)
-
-            minx, miny = transformer.transform(bbox[0], bbox[1])
-            maxx, maxy = transformer.transform(bbox[2], bbox[3])
-
-            bbox2 = ','.join(str(c) for c in [minx, miny, maxx, maxy])
+        if version == '1.3.0' and wms_crs == 'EPSG:4326':
+            bbox = [bbox[1], bbox[0], bbox[3], bbox[2]]
+        bbox2 = ','.join(map(str, bbox))
 
         if not transparent:
             self._transparent = 'FALSE'
-
         crs_param = 'crs' if version == '1.3.0' else 'srs'
 
         params = {
@@ -115,7 +109,7 @@ class WMSFacadeProvider(BaseProvider):
             'service': 'WMS',
             'request': 'GetMap',
             'bbox': bbox2,
-            crs_param: CRS_CODES[crs],
+            crs_param: wms_crs,
             'layers': self.options['layer'],
             'styles': self.options.get('style', 'default'),
             'width': width,

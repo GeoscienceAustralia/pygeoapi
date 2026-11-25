@@ -3,9 +3,11 @@
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #          John A Stevenson <jostev@bgs.ac.uk>
 #          Colin Blackburn <colb@bgs.ac.uk>
+#          Francesco Bartoli <xbartolone@gmail.com>
 #
-# Copyright (c) 2024 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 # Copyright (c) 2022 John A Stevenson and Colin Blackburn
+# Copyright (c) 2025 Francesco Bartoli
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -40,12 +42,13 @@ import pytest
 import pyproj
 from shapely.geometry import Point
 
-from pygeoapi.api import (API, FORMAT_TYPES, F_GZIP, F_HTML, F_JSONLD,
-                          apply_gzip)
+from pygeoapi.api import API, apply_gzip
 from pygeoapi.api.itemtypes import (
     get_collection_queryables, get_collection_item,
     get_collection_items, manage_collection_item)
-from pygeoapi.util import yaml_load, get_crs_from_uri
+from pygeoapi.crs import get_crs
+from pygeoapi.formats import FORMAT_TYPES, F_GZIP, F_HTML, F_JSONLD
+from pygeoapi.util import yaml_load
 
 from tests.util import get_test_file_path, mock_api_request
 
@@ -101,6 +104,15 @@ def test_get_collection_queryables(config, api_):
 
     # No language requested: should be set to default from YAML
     assert rsp_headers['Content-Language'] == 'en-US'
+
+    req = mock_api_request({'f': 'json', 'profile': 'actual-domain'})
+    rsp_headers, code, response = get_collection_queryables(api_, req, 'canada-metadata')  # noqa
+    assert rsp_headers['Content-Type'] == 'application/schema+json'
+    queryables = json.loads(response)
+
+    assert 'properties' in queryables
+    assert 'enum' in queryables['properties']['title']
+    assert len(queryables['properties']['title']['enum']) == 10
 
 
 def test_get_collection_items(config, api_):
@@ -208,7 +220,7 @@ def test_get_collection_items(config, api_):
     assert features['features'][1]['properties']['stn_id'] == 35
 
     links = features['links']
-    assert len(links) == 5
+    assert len(links) == 6
     assert '/collections/obs/items?f=json' in links[0]['href']
     assert links[0]['rel'] == 'self'
     assert '/collections/obs/items?f=jsonld' in links[1]['href']
@@ -216,8 +228,9 @@ def test_get_collection_items(config, api_):
     assert '/collections/obs/items?f=html' in links[2]['href']
     assert links[2]['rel'] == 'alternate'
     assert '/collections/obs' in links[3]['href']
-    assert links[3]['rel'] == 'next'
-    assert links[4]['rel'] == 'collection'
+    assert links[3]['rel'] == 'alternate'
+    assert links[4]['rel'] == 'next'
+    assert links[5]['rel'] == 'collection'
 
     # Invalid offset
     req = mock_api_request({'offset': -1})
@@ -234,22 +247,24 @@ def test_get_collection_items(config, api_):
     assert features['features'][1]['properties']['stn_id'] == 2147
 
     links = features['links']
-    assert len(links) == 5
+    assert len(links) == 6
     assert '/collections/obs/items?f=json' in links[0]['href']
     assert links[0]['rel'] == 'self'
     assert '/collections/obs/items?f=jsonld' in links[1]['href']
     assert links[1]['rel'] == 'alternate'
     assert '/collections/obs/items?f=html' in links[2]['href']
     assert links[2]['rel'] == 'alternate'
-    assert '/collections/obs/items?offset=0' in links[3]['href']
-    assert links[3]['rel'] == 'prev'
-    assert '/collections/obs' in links[4]['href']
-    assert links[4]['rel'] == 'collection'
+    assert '/collections/obs/items?f=csv' in links[3]['href']
+    assert links[3]['rel'] == 'alternate'
+    assert '/collections/obs/items?offset=0' in links[4]['href']
+    assert links[4]['rel'] == 'prev'
+    assert '/collections/obs' in links[5]['href']
+    assert links[5]['rel'] == 'collection'
 
     req = mock_api_request({
         'offset': '1',
         'limit': '1',
-        'bbox': '-180,90,180,90'
+        'bbox': '-180,-90,180,90'
     })
     rsp_headers, code, response = get_collection_items(api_, req, 'obs')
     features = json.loads(response)
@@ -257,23 +272,32 @@ def test_get_collection_items(config, api_):
     assert len(features['features']) == 1
 
     links = features['links']
-    assert len(links) == 6
-    assert '/collections/obs/items?f=json&limit=1&bbox=-180,90,180,90' in \
+    assert len(links) == 7
+    assert '/collections/obs/items?f=json&limit=1&bbox=-180,-90,180,90' in \
         links[0]['href']
     assert links[0]['rel'] == 'self'
-    assert '/collections/obs/items?f=jsonld&limit=1&bbox=-180,90,180,90' in \
+    assert '/collections/obs/items?f=jsonld&limit=1&bbox=-180,-90,180,90' in \
         links[1]['href']
     assert links[1]['rel'] == 'alternate'
-    assert '/collections/obs/items?f=html&limit=1&bbox=-180,90,180,90' in \
+    assert '/collections/obs/items?f=html&limit=1&bbox=-180,-90,180,90' in \
         links[2]['href']
     assert links[2]['rel'] == 'alternate'
-    assert '/collections/obs/items?offset=0&limit=1&bbox=-180,90,180,90' \
+    assert '/collections/obs/items?f=csv&limit=1&bbox=-180,-90,180,90' \
         in links[3]['href']
-    assert links[3]['rel'] == 'prev'
-    assert '/collections/obs' in links[4]['href']
-    assert links[3]['rel'] == 'prev'
-    assert links[4]['rel'] == 'next'
-    assert links[5]['rel'] == 'collection'
+    assert links[3]['rel'] == 'alternate'
+    assert '/collections/obs/items?offset=0&limit=1&bbox=-180,-90,180,90' in links[4]['href']  # noqa
+    assert links[4]['rel'] == 'prev'
+    assert '/collections/obs' in links[5]['href']
+    assert links[4]['rel'] == 'prev'
+    assert links[5]['rel'] == 'next'
+    assert links[6]['rel'] == 'collection'
+
+    req = mock_api_request({
+        'sortby': ''
+    })
+    rsp_headers, code, response = get_collection_items(api_, req, 'obs')
+
+    assert code == HTTPStatus.BAD_REQUEST
 
     req = mock_api_request({
         'sortby': 'bad-property',
@@ -375,6 +399,38 @@ def test_get_collection_items(config, api_):
 
     assert code == HTTPStatus.BAD_REQUEST
 
+    # test Accept header for dataset formatters
+    req = mock_api_request(HTTP_ACCEPT='application/json')
+    rsp_headers, code, response = get_collection_items(api_, req, 'obs')
+    assert rsp_headers['Content-Type'] == 'application/json'
+
+    req = mock_api_request(HTTP_ACCEPT='text/csv')
+    rsp_headers, code, response = get_collection_items(api_, req, 'obs')
+    assert rsp_headers['Content-Type'] == 'text/csv; charset=utf-8'
+
+    req = mock_api_request({'f': 'json'}, HTTP_ACCEPT='text/csv')
+    rsp_headers, code, response = get_collection_items(api_, req, 'obs')
+    assert rsp_headers['Content-Type'] == 'application/json'
+
+    req = mock_api_request({'f': 'csv'}, HTTP_ACCEPT='application/json')
+    rsp_headers, code, response = get_collection_items(api_, req, 'obs')
+    assert rsp_headers['Content-Type'] == 'text/csv; charset=utf-8'
+
+
+def test_get_collection_items_include_extra_query_parameters(config, api_):
+    req = mock_api_request()
+    rsp_headers, code, response = get_collection_items(api_, req, 'obs')
+
+    assert code == HTTPStatus.OK
+    response = json.loads(response)
+    assert response['numberMatched'] == 5
+
+    api_.config['resources']['obs']['providers'][0]['include_extra_query_parameters'] = True  # noqa
+    req = mock_api_request({'foo': 'bar'})
+    rsp_headers, code, response = get_collection_items(api_, req, 'obs')
+
+    assert code == HTTPStatus.BAD_REQUEST
+
 
 def test_collection_items_gzip_csv(config, api_, openapi):
     # Add gzip to server
@@ -435,7 +491,7 @@ def test_get_collection_items_crs(config, api_):
         assert code == HTTPStatus.OK
         assert rsp_headers['Content-Crs'] == f'<{crs}>'
 
-    # With CRS query parameter, using storageCRS
+    # With CRS query parameter, using storage_crs
     req = mock_api_request({'crs': storage_crs})
     rsp_headers, code, response = get_collection_items(
         api_, req, 'norway_pop')
@@ -483,7 +539,7 @@ def test_get_collection_items_crs(config, api_):
     # With CRS query parameter resulting in coordinates transformation
     transform_func = pyproj.Transformer.from_crs(
         pyproj.CRS.from_epsg(4258),
-        get_crs_from_uri(default_crs),
+        get_crs(default_crs),
         always_xy=False,
     ).transform
     for feat_orig in features_4258['features']:
@@ -628,7 +684,7 @@ def test_get_collection_item_json_ld(config, api_):
     expanded = jsonld.expand(feature)[0]
     assert expanded['http://www.opengis.net/ont/geosparql#hasGeometry'][0][
             'http://www.opengis.net/ont/geosparql#asWKT'][0][
-            '@value'] == 'MULTIPOINT (10 40, 40 30, 20 20, 30 10)'
+            '@value'] == 'MULTIPOINT ((10 40), (40 30), (20 20), (30 10))'
     assert expanded['https://schema.org/geo'][0][
             'https://schema.org/polygon'][0][
             '@value'] == "10.0,40.0 40.0,30.0 20.0,20.0 30.0,10.0 10.0,40.0"

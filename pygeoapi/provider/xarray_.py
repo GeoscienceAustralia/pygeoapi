@@ -4,7 +4,7 @@
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #
 # Copyright (c) 2020 Gregory Petrochenkov
-# Copyright (c) 2022 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -38,15 +38,14 @@ import xarray
 import fsspec
 import numpy as np
 import pyproj
-from pyproj.exceptions import CRSError
 
-from pygeoapi.api import DEFAULT_STORAGE_CRS
-
+from pygeoapi.crs import DEFAULT_CRS, DEFAULT_STORAGE_CRS, get_crs, get_srid
 from pygeoapi.provider.base import (BaseProvider,
                                     ProviderConnectionError,
                                     ProviderNoDataError,
                                     ProviderQueryError)
-from pygeoapi.util import get_crs_from_uri, read_data
+from pygeoapi.provider.base_edr import BaseEDRProvider
+from pygeoapi.util import read_data
 
 LOGGER = logging.getLogger(__name__)
 
@@ -63,9 +62,14 @@ class XarrayProvider(BaseProvider):
 
         super().__init__(provider_def)
 
+        open_options = {}
+        squeeze = provider_def.get('options', {}).get('squeeze', False)
+        zarr_options = provider_def.get('options', {}).get('zarr', {})
+
         try:
             if provider_def['data'].endswith('.zarr'):
                 open_func = xarray.open_zarr
+                open_options = zarr_options
             else:
                 if '*' in self.data:
                     LOGGER.debug('Detected multi file dataset')
@@ -86,7 +90,7 @@ class XarrayProvider(BaseProvider):
                 data_to_open = self.data
 
             try:
-                self._data = open_func(data_to_open)
+                self._data = open_func(data_to_open, **open_options)
             except ValueError as err:
                 # Manage non-cf-compliant time dimensions
                 if 'time' in str(err):
@@ -94,7 +98,13 @@ class XarrayProvider(BaseProvider):
                 else:
                     raise err
 
-            self.storage_crs = self._parse_storage_crs(provider_def)
+            if squeeze:
+                LOGGER.debug('Squeezing data')
+                self._data = self._data.squeeze()
+
+            if provider_def.get('storage_crs') is None:
+                self.storage_crs = self._parse_storage_crs()
+
             self._coverage_properties = self._get_coverage_properties()
 
             self.axes = self._coverage_properties['axes']
@@ -111,9 +121,16 @@ class XarrayProvider(BaseProvider):
                     LOGGER.debug('Adding variable')
                     dtype = value.dtype
                     if dtype.name.startswith('float'):
-                        dtype = 'number'
+                        dtype = 'float'
                     elif dtype.name.startswith('int'):
                         dtype = 'integer'
+                    elif dtype.name.startswith('str'):
+                        dtype = 'string'
+
+                    if value.attrs.get('units') is None:
+                        msg = f'Field {key} missing units, will be skipped'
+                        LOGGER.warning(msg)
+                        continue
 
                     self._fields[key] = {
                         'type': dtype,
@@ -238,19 +255,21 @@ class XarrayProvider(BaseProvider):
                 data.coords[self.x_field].values[-1],
                 data.coords[self.y_field].values[-1]
             ],
-            "driver": "xarray",
-            "height": data.sizes[self.y_field],
-            "width": data.sizes[self.x_field],
-            "variables": {var_name: var.attrs
-                          for var_name, var in data.variables.items()}
+            'driver': 'xarray',
+            'height': data.sizes[self.y_field],
+            'width': data.sizes[self.x_field],
+            'variables': {
+                var_name: var.attrs
+                for var_name, var in data.variables.items()
+            }
         }
 
         if self.time_field is not None:
             out_meta['time'] = [
                 _to_datetime_string(data.coords[self.time_field].values[0]),
-                _to_datetime_string(data.coords[self.time_field].values[-1]),
+                _to_datetime_string(data.coords[self.time_field].values[-1])
             ]
-            out_meta["time_steps"] = data.sizes[self.time_field]
+            out_meta['time_steps'] = data.sizes[self.time_field]
 
         LOGGER.debug('Serializing data in memory')
         if format_ == 'json':
@@ -330,55 +349,72 @@ class XarrayProvider(BaseProvider):
             'ranges': {}
         }
 
+        if (data.coords[self.x_field].size == 1 and
+                data.coords[self.y_field].size == 1):
+            LOGGER.debug('Modelling as PointSeries')
+            cj['domain']['axes']['x'] = {
+                'values': [float(data.coords[self.x_field].values)]
+            }
+            cj['domain']['axes']['y'] = {
+                'values': [float(data.coords[self.y_field].values)]
+            }
+            cj['domain']['domainType'] = 'PointSeries'
+
         if self.time_field is not None:
-            mint, maxt = metadata['time']
-            cj['domain']['axes'][self.time_field] = {
-                'start': mint,
-                'stop': maxt,
-                'num': metadata['time_steps'],
+            LOGGER.debug('Adding time axis')
+            cj['domain']['axes']['t'] = {
+                'values': [str(v) for v in (
+                    data[self.time_field].values
+                    if hasattr(data[self.time_field].values, '__iter__')
+                    else [data[self.time_field].values]
+                    )
+                ]
             }
-
-        for key, value in selected_fields.items():
-            parameter = {
-                'type': 'Parameter',
-                'description': value['title'],
-                'unit': {
-                    'symbol': value['x-ogc-unit']
-                },
-                'observedProperty': {
-                    'id': key,
-                    'label': {
-                        'en': value['title']
-                    }
+            cj['domain']['referencing'].append({
+                'coordinates': ['t'],
+                'system': {
+                    'type': 'TemporalRS',
+                    'calendar': 'Gregorian'
                 }
-            }
+            })
 
-            cj['parameters'][key] = parameter
+        LOGGER.debug('Adding parameters')
+        cj['parameters'] = BaseEDRProvider.get_parameters(
+            self, selected_fields
+        )
 
         data = data.fillna(None)
 
         try:
             for key, value in selected_fields.items():
-                cj['ranges'][key] = {
+                LOGGER.debug(f'Adding range {key}')
+                range = {
                     'type': 'NdArray',
                     'dataType': value['type'],
                     'axisNames': [
                         'y', 'x'
                     ],
-                    'shape': [metadata['height'],
-                              metadata['width']]
+                    'shape': [
+                        metadata['height'], metadata['width']
+                    ],
+                    'values': [
+                        None if np.isnan(v) else v
+                        for v in data[key].values.flatten()
+                    ]
                 }
-                cj['ranges'][key]['values'] = data[key].values.flatten().tolist()  # noqa
 
                 if self.time_field is not None:
-                    cj['ranges'][key]['axisNames'].append(
-                        self._coverage_properties['time_axis_label']
-                    )
-                    cj['ranges'][key]['shape'].append(metadata['time_steps'])
+                    LOGGER.debug(f'Adding time axis to range {key}')
+                    range['axisNames'].insert(0, 't')
+                    range['shape'].insert(0, metadata['time_steps'])
+
+                cj['ranges'][key] = range
+
         except IndexError as err:
-            LOGGER.warning(err)
+            LOGGER.error(err)
             raise ProviderQueryError('Invalid query parameter')
 
+        LOGGER.debug('Returning data')
         return cj
 
     def _get_coverage_properties(self):
@@ -420,7 +456,7 @@ class XarrayProvider(BaseProvider):
                 self._data.coords[self.x_field].values[-1],
                 self._data.coords[self.y_field].values[-1],
             ],
-            'bbox_crs': 'http://www.opengis.net/def/crs/OGC/1.3/CRS84',
+            'bbox_crs': DEFAULT_CRS,
             'crs_type': 'GeographicCRS',
             'x_axis_label': self.x_field,
             'y_axis_label': self.y_field,
@@ -452,12 +488,9 @@ class XarrayProvider(BaseProvider):
             properties['restime'] = self.get_time_resolution()
 
         # Update properties based on the xarray's CRS
-        epsg_code = self.storage_crs.to_epsg()
+        epsg_code = get_srid(self.storage_crs)
         LOGGER.debug(f'{epsg_code}')
-        if epsg_code == 4326 or self.storage_crs == 'OGC:CRS84':
-            pass
-            LOGGER.debug('Confirmed default of WGS 84')
-        else:
+        if epsg_code != 4326:
             properties['bbox_crs'] = \
                 f'https://www.opengis.net/def/crs/EPSG/0/{epsg_code}'
             properties['inverse_flattening'] = \
@@ -550,57 +583,31 @@ class XarrayProvider(BaseProvider):
         for var_name, var in self._data.variables.items():
             if all(dim in var.dims for dim in spatiotemporal_dims):
                 try:
-                    grid_mapping_name = self._data[var_name].attrs['grid_mapping']  # noqa 
+                    grid_mapping_name = self._data[var_name].attrs['grid_mapping']  # noqa
                     LOGGER.debug(f'Grid mapping: {grid_mapping_name}')
                 except KeyError as err:
                     LOGGER.debug(err)
                     LOGGER.debug('No grid mapping information found.')
         return grid_mapping_name
 
-    def _parse_storage_crs(
-        self,
-        provider_def: dict
-    ) -> pyproj.CRS:
+    def _parse_storage_crs(self) -> pyproj.CRS:
         """
         Parse the storage CRS from an xarray dataset.
 
-        :param provider_def: provider definition
-
         :returns: `pyproj.CRS` instance parsed from dataset
         """
-        storage_crs = None
 
+        grid_mapping = self._parse_grid_mapping()
         try:
-            storage_crs = provider_def['storage_crs']
-            crs_function = pyproj.CRS.from_user_input
-        except KeyError as err:
-            LOGGER.debug(err)
-            LOGGER.debug('No storage_crs found. Attempting to parse the CRS.')
-
-        if storage_crs is None:
-            grid_mapping = self._parse_grid_mapping()
             if grid_mapping is not None:
-                storage_crs = self._data[grid_mapping].attrs
-                crs_function = pyproj.CRS.from_cf
+                return pyproj.CRS.from_cf(self._data[grid_mapping].attrs)
             elif 'crs' in self._data.variables.keys():
-                storage_crs = self._data['crs'].attrs
-                crs_function = pyproj.CRS.from_dict
-            else:
-                storage_crs = DEFAULT_STORAGE_CRS
-                crs_function = get_crs_from_uri
-                LOGGER.debug('Failed to parse dataset CRS. Assuming WGS84.')
-
-        LOGGER.debug(f'Parsing CRS {storage_crs} with {crs_function}')
-        try:
-            crs = crs_function(storage_crs)
-        except CRSError as err:
+                return pyproj.CRS.from_dict(self._data['crs'].attrs)
+        except pyproj.exceptions.CRSError as err:
             LOGGER.debug(f'Unable to parse projection with pyproj: {err}')
             LOGGER.debug('Assuming default WGS84.')
-            crs = get_crs_from_uri(DEFAULT_STORAGE_CRS)
 
-        LOGGER.debug(crs)
-
-        return crs
+        return get_crs(DEFAULT_STORAGE_CRS)
 
 
 def _to_datetime_string(datetime_obj):
@@ -675,11 +682,11 @@ def _get_zarr_data(data):
 
 def _convert_float32_to_float64(data):
     """
-        Converts DataArray values of float32 to float64
-        :param data: Xarray dataset of coverage data
+    Converts DataArray values of float32 to float64
+    :param data: Xarray dataset of coverage data
 
-        :returns: Xarray dataset of coverage data
-        """
+    :returns: Xarray dataset of coverage data
+    """
 
     for var_name in data.variables:
         if data[var_name].dtype == 'float32':

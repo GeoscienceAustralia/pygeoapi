@@ -3,9 +3,11 @@
 #
 # Authors: Just van den Broecke <justb4@gmail.com>
 #          Benjamin Webb <benjamin.miller.webb@gmail.com>
+#          Tom Kralidis <tomkralidis@gmail.com>
 #
 # Copyright (c) 2019 Just van den Broecke
 # Copyright (c) 2024 Benjamin Webb
+# Copyright (c) 2025 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -37,8 +39,16 @@ echo "START /entrypoint.sh"
 set +e
 
 export PYGEOAPI_HOME=/pygeoapi
-export PYGEOAPI_CONFIG="${PYGEOAPI_HOME}/local.config.yml"
-export PYGEOAPI_OPENAPI="${PYGEOAPI_HOME}/local.openapi.yml"
+
+if [[ -z "$PYGEOAPI_CONFIG" ]]; then
+    export PYGEOAPI_CONFIG="${PYGEOAPI_HOME}/local.config.yml"
+fi
+if [[ -z "$PYGEOAPI_OPENAPI" ]]; then
+    export PYGEOAPI_OPENAPI="${PYGEOAPI_HOME}/local.openapi.yml"
+fi
+if [[ -z "$PYGEOAPI_ASYNCAPI" ]]; then
+    export PYGEOAPI_ASYNCAPI="${PYGEOAPI_HOME}/local.asyncapi.yml"
+fi
 
 # gunicorn env settings with defaults
 SCRIPT_NAME=${SCRIPT_NAME:=/}
@@ -50,80 +60,100 @@ WSGI_WORKERS=${WSGI_WORKERS:=4}
 WSGI_WORKER_TIMEOUT=${WSGI_WORKER_TIMEOUT:=6000}
 WSGI_WORKER_CLASS=${WSGI_WORKER_CLASS:=gevent}
 
+# pygeoapi env settings with defaults
+PYGEOAPI_OPENAPI_GENERATE_FAIL_ON_INVALID_COLLECTION=${PYGEOAPI_OPENAPI_GENERATE_FAIL_ON_INVALID_COLLECTION:=true}
+
+if [ ${PYGEOAPI_OPENAPI_GENERATE_FAIL_ON_INVALID_COLLECTION} = false ] ; then
+    OPENAPI_GENERATE_FAIL_ON_INVALID_COLLECTION='--no-fail-on-invalid-collection'
+else
+    OPENAPI_GENERATE_FAIL_ON_INVALID_COLLECTION='--fail-on-invalid-collection'
+fi
+
 # What to invoke: default is to run gunicorn server
 entry_cmd=${1:-run}
 
 # Shorthand
 function error() {
-	echo "ERROR: $@"
-	exit -1
+    echo "ERROR: $@"
+    exit -1
 }
 
 # Workdir
 cd ${PYGEOAPI_HOME}
 
+echo "Default config in ${PYGEOAPI_CONFIG}"
+
 echo "Trying to generate openapi.yml"
-pygeoapi openapi generate ${PYGEOAPI_CONFIG} --output-file ${PYGEOAPI_OPENAPI}
+/venv/bin/pygeoapi openapi generate ${PYGEOAPI_CONFIG} --output-file ${PYGEOAPI_OPENAPI} ${OPENAPI_GENERATE_FAIL_ON_INVALID_COLLECTION}
 
 [[ $? -ne 0 ]] && error "openapi.yml could not be generated ERROR"
 
 echo "openapi.yml generated continue to pygeoapi"
 
-start_gunicorn() {
-	# SCRIPT_NAME should not have value '/'
-	[[ "${SCRIPT_NAME}" = '/' ]] && export SCRIPT_NAME="" && echo "make SCRIPT_NAME empty from /"
+echo "Trying to generate asyncapi.yml"
+/venv/bin/pygeoapi asyncapi generate ${PYGEOAPI_CONFIG} --output-file ${PYGEOAPI_ASYNCAPI}
 
-	echo "Starting gunicorn name=${CONTAINER_NAME} on ${CONTAINER_HOST}:${CONTAINER_PORT} with ${WSGI_WORKERS} workers and SCRIPT_NAME=${SCRIPT_NAME}"
-	exec gunicorn --workers ${WSGI_WORKERS} \
-		--worker-class=${WSGI_WORKER_CLASS} \
-		--timeout ${WSGI_WORKER_TIMEOUT} \
-		--name=${CONTAINER_NAME} \
-		--bind ${CONTAINER_HOST}:${CONTAINER_PORT} \
-		${@} \
-		${WSGI_APP}
+[[ $? -ne 0 ]] && echo "asyncapi.yml could not be generated; skipping"
+
+start_gunicorn() {
+    # SCRIPT_NAME should not have value '/'
+    [[ "${SCRIPT_NAME}" = '/' ]] && export SCRIPT_NAME="" && echo "make SCRIPT_NAME empty from /"
+
+    echo "Starting gunicorn name=${CONTAINER_NAME} on ${CONTAINER_HOST}:${CONTAINER_PORT} with ${WSGI_WORKERS} workers and SCRIPT_NAME=${SCRIPT_NAME}"
+    exec /venv/bin/gunicorn --workers ${WSGI_WORKERS} \
+        --worker-class=${WSGI_WORKER_CLASS} \
+        --timeout ${WSGI_WORKER_TIMEOUT} \
+        --name=${CONTAINER_NAME} \
+        --bind ${CONTAINER_HOST}:${CONTAINER_PORT} \
+        ${@} \
+        ${WSGI_APP}
 }
 
 case ${entry_cmd} in
-	# Run Unit tests
-	test)
-	  for test_py in $(ls tests/test_*.py)
-	  do
-	    # Skip tests requiring backend server or libs installed
-	    case ${test_py} in
-	        tests/test_elasticsearch__provider.py)
-	        ;&
-	        tests/test_sensorthings_provider.py)
-	        ;&
-	        tests/test_postgresql_provider.py)
-			    ;&
-	        tests/test_mongo_provider.py)
-	        	echo "Skipping: ${test_py}"
-	        ;;
-	        *)
-	        	python3 -m pytest ${test_py}
-	         ;;
-	    esac
-	  done
-	  ;;
+    # Run Unit tests
+    test)
+        for test_py in $(ls tests/test_*.py)
+        do
+            # Skip tests requiring backend server or libs installed
+            case ${test_py} in
+                tests/test_elasticsearch__provider.py)
+                    ;&
+                tests/test_sensorthings_provider.py)
+                    ;&
+                tests/test_postgresql_provider.py)
+                    ;&
+                tests/test_mongo_provider.py)
+                    echo "Skipping: ${test_py}"
+                    ;;
+                *)
+                    /venv/bin/python3 -m pytest ${test_py}
+                    ;;
+            esac
+        done
+    ;;
 
-	# Run pygeoapi server
-	run)
-		# Start
-		start_gunicorn
-		;;
+    # Run pygeoapi server
+    run)
+        # Start
+        start_gunicorn
+        ;;
 
-	# Run pygeoapi server with hot reload
-	run-with-hot-reload)
-		# Lock all Python files (for gunicorn hot reload)
-		find . -type f -name "*.py" | xargs chmod 0444
+    # Run pygeoapi server with hot reload
+    run-with-hot-reload)
+        # Lock all Python files (for gunicorn hot reload), if running with user root
+        if [[ $(id -u) -eq 0 ]]
+        then
+            echo "Running pygeoapi as root"
+            find . -type f -name "*.py" | xargs chmod 0444
+        fi
 
-		# Start with hot reload options
-		start_gunicorn --reload --reload-extra-file ${PYGEOAPI_CONFIG}
-		;;
+        # Start with hot reload options
+        start_gunicorn --reload --reload-extra-file ${PYGEOAPI_CONFIG}
+        ;;
 
-	*)
-	  error "unknown command arg: must be run (default), run-with-hot-reload, or test"
-	  ;;
+    *)
+        error "unknown command arg: must be run (default), run-with-hot-reload, or test"
+        ;;
 esac
 
 echo "END /entrypoint.sh"

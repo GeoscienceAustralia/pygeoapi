@@ -3,7 +3,7 @@
 # Authors: Francesco Bartoli <xbartolone@gmail.com>
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2020 Francesco Bartoli
+# Copyright (c) 2025 Francesco Bartoli
 # Copyright (c) 2022 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
@@ -32,6 +32,9 @@
 import logging
 from http import HTTPStatus
 
+from pygeoapi.models.provider.base import (
+    TileMatrixSetEnum)
+
 from pygeoapi.provider.base import (
     ProviderGenericError, ProviderItemNotFoundError)
 
@@ -55,8 +58,8 @@ class BaseTileProvider:
         self.format_type = provider_def['format']['name']
         self.mimetype = provider_def['format']['mimetype']
         self.options = provider_def.get('options')
+        self.schemes = self.options.get('schemes', [])
         self.tile_type = None
-        self.fields = {}
 
     def get_layer(self):
         """
@@ -123,6 +126,53 @@ class BaseTileProvider:
         """
 
         raise NotImplementedError()
+
+    def is_in_limits(self, tilematrixset, z, x, y):
+        """
+        Is within the limits of the tilematrixset
+
+        :param z: tilematrix
+        :param x: x
+        :param y: y
+
+        :returns: wether this tile is within the tile matrix
+        set limits (Boolean)
+        """
+
+        try:
+            x, y, z = map(int, (x, y, z))
+        except ValueError:
+            LOGGER.warning('Unable to cast tile index to integer')
+            return False
+
+        return all([
+            x < tilematrixset.tileMatrices[z]['matrixWidth'],
+            y < tilematrixset.tileMatrices[z]['matrixHeight'],
+            self.options['zoom']['min'] <= z <= self.options['zoom']['max']
+        ])
+
+    def get_tilematrixset(self, tileMatrixSetId):
+        """
+        Get tilematrixset
+
+        :param tileMatrixSetId: tilematrixsetid str
+
+        :returns: tilematrixset enum object
+        """
+
+        enums = [e.value for e in TileMatrixSetEnum]
+        enum = None
+
+        try:
+            for e in enums:
+                if tileMatrixSetId == e.tileMatrixSet:
+                    enum = e
+            if not enum:
+                raise ValueError('could not find this tilematrixset')
+            return enum
+
+        except ValueError as err:
+            LOGGER.error(err)
 
 
 class ProviderTileQueryError(ProviderGenericError):

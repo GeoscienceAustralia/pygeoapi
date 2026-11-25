@@ -5,7 +5,7 @@
 #          Colin Blackburn <colb@bgs.ac.uk>
 #          Bernhard Mallinger <bernhard.mallinger@eox.at>
 #
-# Copyright (c) 2024 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 # Copyright (c) 2022 John A Stevenson and Colin Blackburn
 #
 # Permission is hereby granted, free of charge, to any person
@@ -39,6 +39,22 @@ from pygeoapi.api import describe_collections
 from pygeoapi.api.environmental_data_retrieval import get_collection_edr_query
 
 from tests.util import mock_api_request
+
+
+def test_describe_collection_edr(config, api_):
+    req = mock_api_request()
+    rsp_headers, code, response = describe_collections(api_, req, 'icoads-sst')
+    collection = json.loads(response)
+    parameter_names = list(collection['parameter_names'].keys())
+    parameter_names.sort()
+    assert len(parameter_names) == 4
+    assert parameter_names == ['AIRT', 'SST', 'UWND', 'VWND']
+
+    sst = collection['parameter_names']['SST']
+    assert sst['id'] == 'SST'
+    assert sst['type'] == 'Parameter'
+    assert sst['observedProperty']['label']['en'] == 'SEA SURFACE TEMPERATURE'
+    assert sst['unit']['symbol']['value'] == 'Deg C'
 
 
 def test_get_collection_edr_query(config, api_):
@@ -81,18 +97,19 @@ def test_get_collection_edr_query(config, api_):
     rsp_headers, code, response = get_collection_edr_query(
         api_, req, 'icoads-sst', None, 'position')
     assert code == HTTPStatus.OK
+    assert rsp_headers['Content-Type'] == 'application/vnd.cov+json'
 
     data = json.loads(response)
 
     axes = list(data['domain']['axes'].keys())
     axes.sort()
     assert len(axes) == 3
-    assert axes == ['TIME', 'x', 'y']
+    assert axes == ['t', 'x', 'y']
 
-    assert data['domain']['axes']['x']['start'] == 11.0
-    assert data['domain']['axes']['x']['stop'] == 11.0
-    assert data['domain']['axes']['y']['start'] == 11.0
-    assert data['domain']['axes']['y']['stop'] == 11.0
+    assert isinstance(data['domain']['axes']['x'], dict)
+    assert isinstance(data['domain']['axes']['x']['values'], list)
+    assert data['domain']['axes']['x']['values'][0] == 11.0
+    assert data['domain']['axes']['y']['values'][0] == 11.0
 
     parameters = list(data['parameters'].keys())
     parameters.sort()
@@ -131,11 +148,19 @@ def test_get_collection_edr_query(config, api_):
     assert code == HTTPStatus.OK
 
     data = json.loads(response)
-    time_dict = data['domain']['axes']['TIME']
+    time_dict = data['domain']['axes']['t']
+    assert isinstance(time_dict, dict)
+    assert isinstance(time_dict['values'], list)
 
-    assert time_dict['start'] == '2000-02-15T16:29:05.999999999'
-    assert time_dict['stop'] == '2000-06-16T10:25:30.000000000'
-    assert time_dict['num'] == 5
+    t_values = [
+        '2000-02-15T16:29:05.999999999',
+        '2000-03-17T02:58:12.000000000',
+        '2000-04-16T13:27:18.000000000',
+        '2000-05-16T23:56:24.000000000',
+        '2000-06-16T10:25:30.000000000'
+    ]
+
+    assert sorted(time_dict['values']) == t_values
 
     # unbounded date range - start
     req = mock_api_request({
@@ -147,11 +172,20 @@ def test_get_collection_edr_query(config, api_):
     assert code == HTTPStatus.OK
 
     data = json.loads(response)
-    time_dict = data['domain']['axes']['TIME']
+    time_dict = data['domain']['axes']['t']
+    assert isinstance(time_dict, dict)
+    assert isinstance(time_dict['values'], list)
 
-    assert time_dict['start'] == '2000-01-16T06:00:00.000000000'
-    assert time_dict['stop'] == '2000-06-16T10:25:30.000000000'
-    assert time_dict['num'] == 6
+    t_values = [
+        '2000-01-16T06:00:00.000000000',
+        '2000-02-15T16:29:05.999999999',
+        '2000-03-17T02:58:12.000000000',
+        '2000-04-16T13:27:18.000000000',
+        '2000-05-16T23:56:24.000000000',
+        '2000-06-16T10:25:30.000000000'
+    ]
+
+    assert sorted(time_dict['values']) == t_values
 
     # unbounded date range - end
     req = mock_api_request({
@@ -163,11 +197,21 @@ def test_get_collection_edr_query(config, api_):
     assert code == HTTPStatus.OK
 
     data = json.loads(response)
-    time_dict = data['domain']['axes']['TIME']
+    time_dict = data['domain']['axes']['t']
+    assert isinstance(time_dict, dict)
+    assert isinstance(time_dict['values'], list)
 
-    assert time_dict['start'] == '2000-06-16T10:25:30.000000000'
-    assert time_dict['stop'] == '2000-12-16T01:20:05.999999996'
-    assert time_dict['num'] == 7
+    t_values = [
+        '2000-06-16T10:25:30.000000000',
+        '2000-07-16T20:54:36.000000000',
+        '2000-08-16T07:23:42.000000000',
+        '2000-09-15T17:52:48.000000000',
+        '2000-10-16T04:21:54.000000000',
+        '2000-11-15T14:51:00.000000000',
+        '2000-12-16T01:20:05.999999996'
+    ]
+
+    assert sorted(time_dict['values']) == t_values
 
     # some data
     req = mock_api_request({
@@ -225,3 +269,23 @@ def test_get_collection_edr_query(config, api_):
     rsp_headers, code, response = get_collection_edr_query(
         api_, req, 'usgs-prism', None, 'cube')
     assert code == HTTPStatus.OK
+
+
+def test_get_collection_edr_query_crs(config, api_):
+    # Invalid CRS query parameter (not a URI)
+    req = mock_api_request({'coords': 'POINT(11 11)', 'crs': '4326'})
+    rsp_headers, code, response = get_collection_edr_query(
+        api_, req, 'icoads-sst', None, 'position')
+    assert code == HTTPStatus.BAD_REQUEST
+
+    # Valid CRS parameter (default CRS)
+    req = mock_api_request({
+        'coords': 'POINT(11 11)',
+        'crs': 'http://www.opengis.net/def/crs/OGC/1.3/CRS84'
+    })
+    rsp_headers, code, response = get_collection_edr_query(
+        api_, req, 'icoads-sst', None, 'position')
+    assert code == HTTPStatus.OK
+    assert 'Content-Crs' in rsp_headers
+    expected_crs = '<http://www.opengis.net/def/crs/OGC/1.3/CRS84>'
+    assert rsp_headers['Content-Crs'] == expected_crs

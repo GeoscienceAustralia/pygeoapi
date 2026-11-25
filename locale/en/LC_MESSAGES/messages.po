@@ -485,6 +485,18 @@ msgstr ""
 msgid "Display Tiles of"
 msgstr ""
 
+#: pygeoapi/templates/collections/collection.html:92
+msgid "Coverages"
+msgstr ""
+
+#: pygeoapi/templates/collections/collection.html:96
+msgid "Display Coverage"
+msgstr ""
+
+#: pygeoapi/templates/collections/collection.html:97
+msgid "Display Coverage of"
+msgstr ""
+
 #: pygeoapi/templates/collections/index.html:13
 msgid "Type"
 msgstr ""
@@ -735,4 +747,28 @@ msgid "Locations"
 msgstr ""
 
 msgid "Instances"
+msgstr ""
+
+msgid "Instance as JSON"
+msgstr ""
+
+msgid "Instance as HTML"
+msgstr ""
+
+msgid "Pub/Sub Notifications"
+msgstr ""
+
+msgid "Pub/Sub broker"
+msgstr ""
+
+msgid "Subscribe to notifications from this service"
+msgstr ""
+
+msgid "AsyncAPI Definition"
+msgstr ""
+
+msgid "The AsyncAPI document as HTML"
+msgstr ""
+
+msgid "The AsyncAPI document as JSON"
 msgstr ""

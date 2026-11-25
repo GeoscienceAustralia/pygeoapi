@@ -5,10 +5,10 @@
 #          Krishna Lodha <krishnaglodha@gmail.com>
 #          Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2022 Francesco Bartoli
+# Copyright (c) 2025 Francesco Bartoli
 # Copyright (c) 2022 Luca Delucchi
 # Copyright (c) 2022 Krishna Lodha
-# Copyright (c) 2024 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -71,6 +71,7 @@ def apply_slash_rule(url: str):
 urlpatterns = [
     path('', views.landing_page, name='landing-page'),
     path(apply_slash_rule('openapi/'), views.openapi, name='openapi'),
+    path(apply_slash_rule('asyncapi/'), views.asyncapi, name='asyncapi'),
     path(
         apply_slash_rule('conformance/'),
         views.conformance,
@@ -262,6 +263,16 @@ urlpatterns = [
         apply_slash_rule('stac/'),
         views.stac_catalog_root,
         name='stac-catalog-root'
+    ),
+    path(
+        apply_slash_rule('stac-api/'),
+        views.stac_landing_page,
+        name='stac-landing-page'
+    ),
+    path(
+        apply_slash_rule('stac-api/search'),
+        views.stac_search,
+        name='stac-search'
     )
 ]
 

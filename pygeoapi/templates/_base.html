@@ -1,5 +1,18 @@
 <!doctype html>
 <html lang="{{ (locale|lower)[:2] }}" dir="{% trans %}text_direction{% endtrans %}" >
+
+{% if config['server']['icon'] %}
+{% set icon = config['server']['icon'] %}
+{% else %}
+{% set icon = config['server']['url'] + '/static/img/favicon.ico' %}
+{% endif %}
+
+{% if config['server']['logo'] %}
+{% set logo = config['server']['logo'] %}
+{% else %}
+{% set logo = config['server']['url'] + '/static/img/logo.png' %}
+{% endif %}
+
   <head>
     <meta charset="{{ config['server']['encoding'] }}">
     <title>{% block title %}{% endblock %}{% if not self.title() %}{{ config['metadata']['identification']['title'] }}{% endif %}</title>
@@ -13,8 +26,8 @@
     <!--[if lt IE 9]>
       <script src="https://cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv.js"></script>
     <![endif]-->
-    <meta name="twitter:image:src"   content="{% block thumb %}{% endblock %}{% if not self.thumb() %}{{ config['server']['url'] }}/static/img/logo.png{% endif %}" />
-    <meta property="og:image"        content="{{ self.thumb() }}{% if not self.thumb() %}{{ config['server']['url'] }}/static/img/logo.png{% endif %}" />
+    <meta name="twitter:image:src"   content="{% block thumb %}{% endblock %}{% if not self.thumb() %}{{ logo }}{% endif %}" />
+    <meta property="og:image"        content="{{ self.thumb() }}{% if not self.thumb() %}{{ logo }}{% endif %}" />
     <meta name="twitter:site"        content="{{ config['metadata']['identification']['title'] }}" />
     <meta property="og:site_name"    content="{{ config['metadata']['identification']['title'] }}" />    
     <meta name="twitter:card"        content="summary_large_image" />
@@ -65,22 +78,22 @@
         <a href="{{ config['server']['url'] }}">{% trans %}Home{% endtrans %}</a>
         {% endblock %}
         <span style="float: inline-end">
-          {% set links_found = namespace(json=0, jsonld=0) %}
+          {% set links_found = namespace(json='', jsonld='') %}
 
           {% for link in data['links'] %}
           {% if link['rel'] == 'alternate' and link['type'] and link['type'] in ['application/json', 'application/geo+json', 'application/prs.coverage+json'] %}
-          {% set links_found.json = 1 %}
+          {% set links_found.json = link.href | string | safe %}
           <a href="{{ link['href'] }}">{% trans %}json{% endtrans %}</a>
           {% elif link['rel'] == 'alternate' and link['type'] and link['type'] == 'application/ld+json' %}
-          {% set links_found.jsonld = 1 %}
+          {% set links_found.jsonld = link.href | string | safe %}
           <a href="{{ link['href'] }}">{% trans %}jsonld{% endtrans %}</a>
           {% endif %}
           {% endfor %}
 
-          {% if links_found.json == 0 %}
+          {% if links_found.json == '' %}
           <a href="?f=json">{% trans %}json{% endtrans %}</a>
           {% endif %}
-          {% if links_found.jsonld == 0 %}
+          {% if links_found.jsonld == '' %}
           <a href="?f=jsonld">{% trans %}jsonld{% endtrans %}</a>
           {% endif %}
 
@@ -121,7 +134,11 @@
     <script>
       // Requests and embeds JSON-LD representation of current page
       var xhr = new XMLHttpRequest();
+      {% if links_found.jsonld == '' -%}
       var path = window.location.protocol + "//" + window.location.host + window.location.pathname + "?f=jsonld";
+      {%- else -%}
+      var path = "{{ links_found.jsonld }}";
+      {%- endif %}
       xhr.open('GET', path);
       xhr.onload = function() {
         if (xhr.status === 200) {

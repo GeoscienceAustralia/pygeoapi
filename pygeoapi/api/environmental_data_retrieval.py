@@ -1,5 +1,5 @@
 # =================================================================
-
+#
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #          Francesco Bartoli <xbartolone@gmail.com>
 #          Sander Schaminee <sander.schaminee@geocat.net>
@@ -8,8 +8,8 @@
 #          Ricardo Garcia Silva <ricardo.garcia.silva@geobeyond.it>
 #          Bernhard Mallinger <bernhard.mallinger@eox.at>
 #
-# Copyright (c) 2024 Tom Kralidis
-# Copyright (c) 2022 Francesco Bartoli
+# Copyright (c) 2026 Tom Kralidis
+# Copyright (c) 2025 Francesco Bartoli
 # Copyright (c) 2022 John A Stevenson and Colin Blackburn
 # Copyright (c) 2023 Ricardo Garcia Silva
 # Copyright (c) 2024 Bernhard Mallinger
@@ -37,27 +37,31 @@
 #
 # =================================================================
 
-
+from copy import deepcopy
 from http import HTTPStatus
 import logging
 from typing import Tuple
 import urllib
 
+from pyproj.exceptions import CRSError
 from shapely.errors import ShapelyError
 from shapely.wkt import loads as shapely_loads
 
 from pygeoapi import l10n
 from pygeoapi.api import evaluate_limit
+from pygeoapi.formats import F_COVERAGEJSON, F_HTML, F_JSON, F_JSONLD
+from pygeoapi.formatter.base import FormatterSerializationError
+from pygeoapi.crs import (create_crs_transform_spec, set_content_crs_header)
+from pygeoapi.openapi import get_oas_30_parameters
 from pygeoapi.plugin import load_plugin, PLUGINS
+from pygeoapi.provider import filter_providers_by_type, get_provider_by_type
 from pygeoapi.provider.base import (
     ProviderGenericError, ProviderItemNotFoundError)
-from pygeoapi.util import (
-    filter_providers_by_type, get_provider_by_type, render_j2_template,
-    to_json, filter_dict_by_key_value
-)
+from pygeoapi.util import (get_dataset_formatters, get_typed_value,
+                           render_j2_template, to_json,
+                           filter_dict_by_key_value)
 
-from . import (APIRequest, API, F_COVERAGEJSON, F_HTML, F_JSON, F_JSONLD,
-               validate_datetime, validate_bbox)
+from . import APIRequest, API, validate_datetime, validate_bbox
 
 LOGGER = logging.getLogger(__name__)
 
@@ -66,8 +70,10 @@ CONFORMANCE_CLASSES = [
 ]
 
 
-def get_collection_edr_instances(api: API, request: APIRequest, dataset,
-                                 instance_id=None) -> Tuple[dict, int, str]:
+def get_collection_edr_instances(api: API, request: APIRequest,
+                                 dataset: str,
+                                 instance_id: str | None = None
+                                 ) -> Tuple[dict, int, str]:
     """
     Queries collection EDR instances
 
@@ -107,7 +113,8 @@ def get_collection_edr_instances(api: API, request: APIRequest, dataset,
 
     if instance_id is not None:
         try:
-            instances = [p.get_instance(instance_id)]
+            if p.instance(instance_id):
+                instances = [instance_id]
         except ProviderItemNotFoundError:
             msg = 'Instance not found'
             return api.get_exception(
@@ -121,20 +128,22 @@ def get_collection_edr_instances(api: API, request: APIRequest, dataset,
             'links': [{
                 'href': f'{uri}/instances/{instance}?f={F_JSON}',
                 'rel': request.get_linkrel(F_JSON),
+                'title': l10n.translate('Instance as JSON', request.locale),
                 'type': 'application/json'
             }, {
                 'href': f'{uri}/instances/{instance}?f={F_HTML}',
                 'rel': request.get_linkrel(F_HTML),
+                'title': l10n.translate('Instance as HTML', request.locale),
                 'type': 'text/html'
             }, {
                 'href': f'{uri}?f={F_HTML}',
                 'rel': 'collection',
-                'title': collections[dataset]['title'],
+                'title': l10n.translate(collections[dataset]['title'], request.locale),  # noqa
                 'type': 'text/html'
             }, {
                 'href': f'{uri}?f={F_JSON}',
                 'rel': 'collection',
-                'title': collections[dataset]['title'],
+                'title': l10n.translate(collections[dataset]['title'], request.locale),  # noqa
                 'type': 'application/json'
             }],
             'data_queries': {}
@@ -143,13 +152,18 @@ def get_collection_edr_instances(api: API, request: APIRequest, dataset,
         for qt in p.get_query_types():
             if qt == 'instances':
                 continue
+
             data_query = {
                 'link': {
-                    'href': f'{uri}/instances/{instance}/{qt}',
+                    'href': f'{uri}/instances/{instance}/{qt}?f={request.format}',  # noqa
                     'rel': 'data',
                     'title': f'{qt} query'
-                 }
+                }
             }
+
+            if request.format is not None and request.format == 'json':
+                data_query['link']['type'] = 'application/vnd.cov+json'
+
             instance_dict['data_queries'][qt] = data_query
 
         data['instances'].append(instance_dict)
@@ -166,7 +180,7 @@ def get_collection_edr_instances(api: API, request: APIRequest, dataset,
                 'href': f'{links_uri}?f={F_JSON}',
                 'rel': request.get_linkrel(F_JSON),
                 'type': 'application/json'
-                }, {
+            }, {
                 'href': f'{links_uri}?f={F_HTML}',
                 'rel': request.get_linkrel(F_HTML),
                 'type': 'text/html'
@@ -190,8 +204,8 @@ def get_collection_edr_instances(api: API, request: APIRequest, dataset,
 
         data['query_type'] = 'instances'
         data['query_path'] = uri
-        data['title'] = collections[dataset]['title']
-        data['description'] = collections[dataset]['description']
+        data['title'] = l10n.translate(collections[dataset]['title'], request.locale)  # noqa
+        data['description'] = l10n.translate(collections[dataset]['description'], request.locale)  # noqa
         data['keywords'] = collections[dataset]['keywords']
         data['collections_path'] = api.get_collections_url()
 
@@ -204,13 +218,13 @@ def get_collection_edr_instances(api: API, request: APIRequest, dataset,
 
         data['links'] = [{
             'rel': 'collection',
-            'title': collections[dataset]['title'],
-            'href': f"{data['dataset_path']}?f={F_JSON}",
+            'title': data['title'],
+            'href': f"{data['dataset_path']}?f={F_HTML}",
             'type': 'text/html'
         }, {
             'rel': 'collection',
-            'title': collections[dataset]['title'],
-            'href': f"{data['dataset_path']}?f={F_HTML}",
+            'title': data['title'],
+            'href': f"{data['dataset_path']}?f={F_JSON}",
             'type': 'application/json'
         }, {
             'type': 'application/json',
@@ -233,8 +247,10 @@ def get_collection_edr_instances(api: API, request: APIRequest, dataset,
 
 
 def get_collection_edr_query(api: API, request: APIRequest,
-                             dataset, instance, query_type,
-                             location_id=None) -> Tuple[dict, int, str]:
+                             dataset: str, instance: str,
+                             query_type: str,
+                             location_id: str | None = None
+                             ) -> Tuple[dict, int, str]:
     """
     Queries collection EDR
 
@@ -247,8 +263,6 @@ def get_collection_edr_query(api: API, request: APIRequest,
     :returns: tuple of headers, status code, content
     """
 
-    if not request.is_valid(PLUGINS['formatter'].keys()):
-        return api.get_format_exception(request)
     headers = request.get_response_headers(api.default_locale,
                                            **api.api_headers)
     collections = filter_dict_by_key_value(api.config['resources'],
@@ -261,14 +275,15 @@ def get_collection_edr_query(api: API, request: APIRequest,
 
     LOGGER.debug('Loading provider')
     try:
-        p = load_plugin('provider', get_provider_by_type(
-            collections[dataset]['providers'], 'edr'))
+        provider_def = get_provider_by_type(
+            collections[dataset]['providers'], 'edr')
+        p = load_plugin('provider', provider_def)
     except ProviderGenericError as err:
         return api.get_exception(
             err.http_status_code, headers, request.format,
             err.ogc_exception_code, err.message)
 
-    if instance is not None and not p.get_instance(instance):
+    if instance is not None and not p.instance(instance):
         msg = 'Invalid instance identifier'
         return api.get_exception(
             HTTPStatus.BAD_REQUEST, headers,
@@ -279,6 +294,35 @@ def get_collection_edr_query(api: API, request: APIRequest,
         return api.get_exception(
             HTTPStatus.BAD_REQUEST, headers, request.format,
             'InvalidParameterValue', msg)
+
+    LOGGER.debug('Validating requested format')
+    dataset_formatters = get_dataset_formatters(collections[dataset])
+
+    if dataset_formatters:
+        LOGGER.debug(f'Dataset formatters: {dataset_formatters}')
+        request._format = request._get_format(
+            request.get_request_headers(request.headers),
+            {v.f: v.mimetype for v in dataset_formatters.values()})
+
+        LOGGER.debug(f'Request format: {request.format}')
+
+    if not request.is_valid(dataset_formatters.keys()):
+        return api.get_format_exception(request)
+
+    crs_transform_spec = None
+    query_crs_uri = request.params.get('crs')
+    if query_crs_uri is not None:
+        LOGGER.debug('Processing crs parameter')
+        try:
+            crs_transform_spec = create_crs_transform_spec(
+                provider_def, query_crs_uri
+            )
+        except (ValueError, CRSError) as err:
+            msg = str(err)
+            return api.get_exception(
+                HTTPStatus.BAD_REQUEST, headers, request.format,
+                'InvalidParameterValue', msg)
+        set_content_crs_header(headers, provider_def, query_crs_uri)
 
     LOGGER.debug('Processing query parameters')
 
@@ -333,8 +377,20 @@ def get_collection_edr_query(api: API, request: APIRequest,
         within = request.params.get('within')
         within_units = request.params.get('within-units')
 
+    corridor_width = width_units = None
+    corridor_height = height_units = None
+    if query_type == 'corridor':
+        LOGGER.debug('Processing corridor width / height / units parameters')
+        corridor_width = request.params.get('corridor-width')
+        width_units = request.params.get('width-units')
+        corridor_height = request.params.get('corridor-height')
+        height_units = request.params.get('height-units')
+
     LOGGER.debug('Processing z parameter')
-    z = request.params.get('z')
+    try:
+        z = get_typed_value(request.params.get('z'))
+    except TypeError:
+        z = None
 
     if parameternames and not any((fld in parameternames)
                                   for fld in p.get_fields().keys()):
@@ -369,8 +425,13 @@ def get_collection_edr_query(api: API, request: APIRequest,
         bbox=bbox,
         within=within,
         within_units=within_units,
+        corridor_width=corridor_width,
+        width_units=width_units,
+        corridor_height=corridor_height,
+        height_units=height_units,
         limit=limit,
-        location_id=location_id
+        location_id=location_id,
+        crs_transform_spec=crs_transform_spec
     )
 
     try:
@@ -394,15 +455,16 @@ def get_collection_edr_query(api: API, request: APIRequest,
 
         data['query_type'] = query_type.capitalize()
         data['query_path'] = uri
+        data['title'] = l10n.translate(collections[dataset]['title'], request.locale)  # noqa
         data['dataset_path'] = '/'.join(uri.split('/')[:-1])
         data['collections_path'] = api.get_collections_url()
 
         data['links'] = [{
             'rel': 'collection',
-            'title': collections[dataset]['title'],
+            'title': data['title'],
             'href': data['dataset_path']
         }, {
-            'type': 'application/prs.coverage+json',
+            'type': 'application/vnd.cov+json',
             'rel': request.get_linkrel(F_COVERAGEJSON),
             'title': l10n.translate('This document as CoverageJSON', request.locale),  # noqa
             'href': f'{uri}?f={F_COVERAGEJSON}{serialized_query_params}'
@@ -416,7 +478,39 @@ def get_collection_edr_query(api: API, request: APIRequest,
         content = render_j2_template(api.tpl_config, tpl_config,
                                      'collections/edr/query.html', data,
                                      api.default_locale)
+    elif request.format in [df.f for df in dataset_formatters.values()]:
+        formatter = [v for v in dataset_formatters.values() if
+                     v.f == request.format][0]
+
+        try:
+            content = formatter.write(
+                data=data,
+                options={
+                    'content_crs': query_crs_uri,
+                    'provider_def': get_provider_by_type(
+                        collections[dataset]['providers'],
+                        'edr')
+                }
+            )
+        except FormatterSerializationError:
+            msg = 'Error serializing output'
+            return api.get_exception(
+                HTTPStatus.INTERNAL_SERVER_ERROR, headers, request.format,
+                'NoApplicableCode', msg)
+
+        headers['Content-Type'] = formatter.mimetype
+
+        if formatter.attachment:
+            if p.filename is None:
+                filename = f'{dataset}.{formatter.extension}'
+            else:
+                filename = f'{p.filename}'
+
+            cd = f'attachment; filename="{filename}"'
+            headers['Content-Disposition'] = cd
+
     else:
+        headers['Content-Type'] = 'application/vnd.cov+json'
         content = to_json(data, api.pretty_print)
 
     return headers, HTTPStatus.OK, content
@@ -444,6 +538,8 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
     for k, v in get_visible_collections(cfg).items():
         edr_extension = filter_providers_by_type(
             collections[k]['providers'], 'edr')
+
+        description = l10n.translate(v['description'], locale)
 
         if edr_extension:
             collection_name_path = f'/collections/{k}'
@@ -487,10 +583,16 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
                     spatial_parameter = {
                         '$ref': f"{OPENAPI_YAML['oaedr']}/parameters/{eqe['qt']}Coords.yaml"  # noqa
                     }
+
+                dataset_formatters = get_dataset_formatters(v)
+                coll_f_parameter = deepcopy(get_oas_30_parameters(cfg, locale))['f']  # noqa
+                for key, value in dataset_formatters.items():
+                    coll_f_parameter['schema']['enum'].append(value.f)
+
                 paths[eqe['path']] = {
                     'get': {
-                        'summary': f"query {v['description']} by {eqe['qt']}",
-                        'description': v['description'],
+                        'summary': f"query {description} by {eqe['qt']}",
+                        'description': description,
                         'tags': [k],
                         'operationId': eqe['op_id'],
                         'parameters': [
@@ -498,13 +600,14 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
                             {'$ref': f"{OPENAPI_YAML['oapif-1']}#/components/parameters/datetime"},  # noqa
                             {'$ref': f"{OPENAPI_YAML['oaedr']}/parameters/parameter-name.yaml"},  # noqa
                             {'$ref': f"{OPENAPI_YAML['oaedr']}/parameters/z.yaml"},  # noqa
-                            {'$ref': '#/components/parameters/f'}
+                            {'$ref': '#/components/parameters/crs'},
+                            coll_f_parameter,
                         ],
                         'responses': {
                             '200': {
                                 'description': 'Response',
                                 'content': {
-                                    'application/prs.coverage+json': {
+                                    'application/vnd.cov+json': {
                                         'schema': {
                                             '$ref': f"{OPENAPI_YAML['oaedr']}/schemas/coverageJSON.yaml"  # noqa
                                         }
@@ -522,8 +625,8 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
             if 'instances' in ep.get_query_types():
                 paths[f'{collection_name_path}/instances'] = {
                     'get': {
-                        'summary': f"Get pre-defined instances of {v['description']}",  # noqa
-                        'description': v['description'],
+                        'summary': f"Get pre-defined instances of {description}",  # noqa
+                        'description': description,
                         'tags': [k],
                         'operationId': f'getInstances{k.capitalize()}',
                         'parameters': [
@@ -538,8 +641,8 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
                 }
                 paths[f'{collection_name_path}/instances/{{instanceId}}'] = {
                     'get': {
-                        'summary': f"Get {v['description']} instance",
-                        'description': v['description'],
+                        'summary': f"Get {description} instance",
+                        'description': description,
                         'tags': [k],
                         'operationId': f'getInstance{k.capitalize()}',
                         'parameters': [
@@ -555,8 +658,8 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
             if 'locations' in ep.get_query_types():
                 paths[f'{collection_name_path}/locations'] = {
                     'get': {
-                        'summary': f"Get pre-defined locations of {v['description']}",  # noqa
-                        'description': v['description'],
+                        'summary': f"Get pre-defined locations of {description}",  # noqa
+                        'description': description,
                         'tags': [k],
                         'operationId': f'getLocations{k.capitalize()}',
                         'parameters': [
@@ -573,21 +676,22 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
                 }
                 paths[f'{collection_name_path}/locations/{{locId}}'] = {
                     'get': {
-                        'summary': f"query {v['description']} by location",
-                        'description': v['description'],
+                        'summary': f"query {description} by location",
+                        'description': description,
                         'tags': [k],
                         'operationId': f'getLocation{k.capitalize()}',
                         'parameters': [
                             {'$ref': f"{OPENAPI_YAML['oaedr']}/parameters/locationId.yaml"},  # noqa
                             {'$ref': f"{OPENAPI_YAML['oapif-1']}#/components/parameters/datetime"},  # noqa
                             {'$ref': f"{OPENAPI_YAML['oaedr']}/parameters/parameter-name.yaml"},  # noqa
+                            {'$ref': '#/components/parameters/crs'},
                             {'$ref': '#/components/parameters/f'}
                         ],
                         'responses': {
                             '200': {
                                 'description': 'Response',
                                 'content': {
-                                    'application/prs.coverage+json': {
+                                    'application/vnd.cov+json': {
                                         'schema': {
                                             '$ref': f"{OPENAPI_YAML['oaedr']}/schemas/coverageJSON.yaml"  # noqa
                                         }

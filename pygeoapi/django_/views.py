@@ -5,10 +5,10 @@
 #          Krishna Lodha <krishnaglodha@gmail.com>
 #          Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2022 Francesco Bartoli
+# Copyright (c) 2025 Francesco Bartoli
 # Copyright (c) 2022 Luca Delucchi
 # Copyright (c) 2022 Krishna Lodha
-# Copyright (c) 2025 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -39,6 +39,7 @@ from typing import Optional, Union
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
+from django.views.decorators.csrf import csrf_exempt
 
 from pygeoapi.api import API, APIRequest, apply_gzip
 import pygeoapi.api as core_api
@@ -51,7 +52,7 @@ import pygeoapi.api.stac as stac_api
 import pygeoapi.api.tiles as tiles_api
 
 if settings.PYGEOAPI_CONFIG['server'].get('admin'):
-    import pygeoapi.admin as admin_api
+    import pygeoapi.api.admin as admin_api
 
 
 def landing_page(request: HttpRequest) -> HttpResponse:
@@ -76,6 +77,18 @@ def openapi(request: HttpRequest) -> HttpResponse:
     """
 
     return execute_from_django(core_api.openapi_, request)
+
+
+def asyncapi(request: HttpRequest) -> HttpResponse:
+    """
+    AsyncAPI endpoint
+
+    :request Django HTTP Request
+
+    :returns: Django HTTP Response
+    """
+
+    return execute_from_django(core_api.asyncapi_, request)
 
 
 def conformance(request: HttpRequest) -> HttpResponse:
@@ -343,6 +356,7 @@ def processes(request: HttpRequest,
                                process_id)
 
 
+@csrf_exempt
 def process_execution(request: HttpRequest, process_id: str) -> HttpResponse:
     """
     OGC API - Processes execution endpoint
@@ -450,6 +464,30 @@ def get_collection_edr_query(
         location_id,
         skip_valid_check=True
     )
+
+
+def stac_landing_page(request: HttpRequest) -> HttpResponse:
+    """
+    STAC API landing page endpoint
+
+    :request Django HTTP Request
+
+    :returns: Django HTTP response
+    """
+
+    return execute_from_django(stac_api.landing_page, request)
+
+
+def stac_search(request: HttpRequest) -> HttpResponse:
+    """
+    STAC API search endpoint
+
+    :request Django HTTP Request
+
+    :returns: Django HTTP response
+    """
+
+    return execute_from_django(stac_api.search, request)
 
 
 def stac_catalog_root(request: HttpRequest) -> HttpResponse:

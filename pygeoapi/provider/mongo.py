@@ -35,8 +35,9 @@ from pymongo import MongoClient
 from pymongo import GEOSPHERE
 from pymongo import ASCENDING, DESCENDING
 from pymongo.collection import ObjectId
+
+from pygeoapi.crs import crs_transform
 from pygeoapi.provider.base import BaseProvider, ProviderItemNotFoundError
-from pygeoapi.util import crs_transform
 
 LOGGER = logging.getLogger(__name__)
 
@@ -101,7 +102,6 @@ class MongoProvider(BaseProvider):
         if sortList:
             featurecursor = featurecursor.sort(sortList)
 
-        matchCount = self.featuredb[self.collection].count_documents(filterObj)
         featurecursor.skip(skip)
         featurecursor.limit(maxitems)
         featurelist = list(featurecursor)
@@ -110,7 +110,7 @@ class MongoProvider(BaseProvider):
             if skip_geometry:
                 item['geometry'] = None
 
-        return featurelist, matchCount
+        return featurelist
 
     @crs_transform
     def query(self, offset=0, limit=10, resulttype='results',
@@ -143,19 +143,27 @@ class MongoProvider(BaseProvider):
                       ASCENDING if (sort['order'] == '+') else DESCENDING)
                      for sort in sortby]
 
-        featurelist, matchcount = self._get_feature_list(
-            filterobj, sortList=sort_list, skip=offset, maxitems=limit,
-            skip_geometry=skip_geometry)
-
-        if resulttype == 'hits':
-            featurelist = []
-
         feature_collection = {
             'type': 'FeatureCollection',
-            'features': featurelist,
-            'numberMatched': matchcount,
-            'numberReturned': len(featurelist)
+            'features': []
         }
+
+        if self.count or resulttype == 'hits':
+            matched = self.featuredb[self.collection].count_documents(
+                filterobj)
+            LOGGER.debug(f'Found {matched} result(s)')
+            feature_collection['numberMatched'] = matched
+
+        if resulttype == 'hits':
+            return feature_collection
+
+        featurelist = self._get_feature_list(
+            filterobj, sortList=sort_list, skip=offset, maxitems=limit,
+            skip_geometry=skip_geometry
+        )
+
+        feature_collection['features'] = featurelist
+        feature_collection['numberReturned'] = len(featurelist)
 
         return feature_collection
 
@@ -167,8 +175,7 @@ class MongoProvider(BaseProvider):
         :param identifier: feature id
         :returns: dict of single GeoJSON feature
         """
-        featurelist, matchcount = self._get_feature_list(
-                                    {'_id': ObjectId(identifier)})
+        featurelist = self._get_feature_list({'_id': ObjectId(identifier)})
         if featurelist:
             return featurelist[0]
         else:

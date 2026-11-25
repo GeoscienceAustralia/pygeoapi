@@ -14,6 +14,7 @@ file whatever you wish; typical filenames end with ``.yml``.
 pygeoapi configuration contains the following core sections:
 
 - ``server``: server-wide settings
+- ``pubsub``: Publish-Subscribe settings (optional)
 - ``logging``: logging configuration
 - ``metadata``: server-wide metadata (contact, licensing, etc.)
 - ``resources``: dataset collections, processes and stac-collections offered by the server
@@ -42,15 +43,21 @@ For more information related to API design rules (the ``api_rules`` property in 
         host: 0.0.0.0  # listening address for incoming connections
         port: 5000  # listening port for incoming connections
     url: http://localhost:5000/  # url of server
+    icon: https://example.org/favicon.ico  # favicon / shortcut icon for default HTML template customization
+    logo: https://example.org/logo.png  # logo/banner for default HTML template customization
     mimetype: application/json; charset=UTF-8  # default MIME type
     encoding: utf-8  # default server encoding
     language: en-US  # default server language
     locale_dir: /path/to/translations
-    gzip: false # default server config to gzip/compress responses to requests with gzip in the Accept-Encoding header
+    ogc_schemas_location: /opt/schemas.opengis.net  # optional local copy of https://schemas.opengis.net
+    gzip: false  # default server config to gzip/compress responses to requests with gzip in the Accept-Encoding header
     cors: true  # boolean on whether server should support CORS
     pretty_print: true  # whether JSON responses should be pretty-printed
+    admin: false  # whether to enable the Admin API
 
-    limits:  # server limits on number of items to return.  This property can also be defined at the resource level to override global server settings
+    # server limits on number of items to return.
+    # overridable when redefined in resource level configuration
+    limits:
         default_items: 50
         max_items: 1000
         max_distance_x: 25
@@ -58,29 +65,48 @@ For more information related to API design rules (the ``api_rules`` property in 
         max_distance_units: m
         on_exceed: throttle  # throttle or error (default=throttle)
 
-    admin: false  # whether to enable the Admin API
-
-    # optional configuration to specify a different set of templates for HTML pages. Recommend using absolute paths. Omit this to use the default provided templates
-    # This property can also be defined at the resource level to override global server settings for specific datasets
-    templates: # optional configuration to specify a different set of templates for HTML pages. Recommend using absolute paths. Omit this to use the default provided templates
+    # configuration to specify directory tree for HTML page templates
+    # omit this to use the default pygeoapi templates
+    # overridable when redefined in resource level configuration
+    templates:
+      # recommended to use absolute paths
       path: /path/to/jinja2/templates/folder # path to templates folder containing the Jinja2 template HTML files
       static: /path/to/static/folder # path to static folder containing css, js, images and other static files referenced by the template
 
-    map:  # leaflet map setup for HTML pages
+    # leaflet map setup for HTML template rendering
+    map:
         url: https://tile.openstreetmap.org/{z}/{x}/{y}.png
         attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap contributors</a>'
-    ogc_schemas_location: /opt/schemas.opengis.net  # local copy of https://schemas.opengis.net
 
-    manager:  # optional OGC API - Processes asynchronous job management
+    # optional OGC API - Processes asynchronous job management configuration
+    manager:
         name: TinyDB  # plugin name (see pygeoapi.plugin for supported process_manager's)
         connection: /tmp/pygeoapi-process-manager.db  # connection info to store jobs (e.g. filepath)
         output_dir: /tmp/  # temporary file area for storing job results (files)
 
-    api_rules:  # optional API design rules to which pygeoapi should adhere
+    # optional API design rules to which pygeoapi should adhere
+    api_rules:
         api_version: 1.2.3  # omit to use pygeoapi's software version
         strict_slashes: true  # trailing slashes will not be allowed and result in a 404
         url_prefix: 'v{api_major}'  # adds a /v1 prefix to all URL paths
         version_header: X-API-Version  # add a response header of this name with the API version
+
+``pubsub``
+^^^^^^^^^^
+
+The ``pubsub`` section provides directives for enabling publication of CloudEvent messaages on item-based transactions
+
+
+.. code-block:: yaml
+
+  pubsub:
+      name: MQTT
+      broker:
+          url: mqtt://localhost:1883
+          channel: my/service/topic
+
+.. seealso::
+   :ref:`pubsub` for more information on Publish-Subscribe capabilities
 
 
 ``logging``
@@ -93,8 +119,8 @@ The ``logging`` section provides directives for logging messages which are usefu
   logging:
       level: ERROR  # the logging level (see https://docs.python.org/3/library/logging.html#logging-levels)
       logfile: /path/to/pygeoapi.log  # the full file path to the logfile
-      logformat: # example for milliseconds:'[%(asctime)s.%(msecs)03d] {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s'
-      dateformat: # example for milliseconds:'%Y-%m-%dT%H:%M:%S'
+      logformat:  # example for milliseconds:'[%(asctime)s.%(msecs)03d] {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s'
+      dateformat:  # example for milliseconds:'%Y-%m-%dT%H:%M:%S'
 
 .. note::
    If ``level`` is defined and ``logfile`` is undefined, logging messages are output to the server's ``stdout``.
@@ -110,11 +136,12 @@ The ``rotation`` supports rotation of disk log files. The ``logfile`` file is op
   logging:
       logfile: /path/to/pygeoapi.log  # the full file path to the logfile
       rotation:
-          mode: # [time|size]
-          when: # [s|m|h|d|w0-w6|midnight]
+          mode:  # [time|size]
+          when:  # [s|m|h|d|w0-w6|midnight]
           interval: 
           max_bytes: 
           backup_count: 
+
 .. note::
   Rotation block is not mandatory and defined only when needed. The ``mode`` can be defined by size or time.
   For RotatingFileHandler_ set mode size and parameters max_bytes and backup_count.
@@ -196,13 +223,13 @@ default.
           keywords:  # list of related keywords
               - observations
               - monitoring
-          linked-data: # linked data configuration (see Linked Data section)
+          linked-data:  # linked data configuration (see Linked Data section)
               context:
                   - datetime: https://schema.org/DateTime
                   - vocab: https://example.com/vocab#
                     stn_id: "vocab:stn_id"
                     value: "vocab:value"
-          links:  # list of 1..n related links
+          links: # list of 1..n related links
               - type: text/csv  # MIME type
                 rel: canonical  # link relations per https://www.iana.org/assignments/link-relations/link-relations.xhtml
                 title: data  # title
@@ -216,43 +243,62 @@ default.
                   begin: 2000-10-30T18:24:39Z  # start datetime in RFC3339
                   end: 2007-10-30T08:57:29Z  # end datetime in RFC3339
                   trs: http://www.opengis.net/def/uom/ISO-8601/0/Gregorian  # TRS
+                  resolution: P1D  # ISO 8601 duration
+                  default: 2000-10-30T18:24:39Z  # default time
+              # additional extents can be added as desired (1..n)
+              foo:
+                  url: https://example.org/def  # required URL of the extent
+                  range: [0, 10] # required overall range/extent
+                  units: °C  # optional units
+                  values: [0, 2, 5, 5, 10]  # optional, enumeration of values
           providers:  # list of 1..n required connections information
-              # provider name
-              # see pygeoapi.plugin for supported providers
-              # for custom built plugins, use the import path (e.g. mypackage.provider.MyProvider)
-              # see Plugins section for more information
-              - type: feature # underlying data geospatial type: (allowed values are: feature, coverage, record, tile, edr)
-                default: true  # optional: if not specified, the first provider definition is considered the default
-                name: CSV
+              - type: feature  # underlying data geospatial type. Allowed values are: feature, coverage, record, tile, edr
+                name: CSV  # required: plugin name or import path. See Plugins section for more information.
                 data: tests/data/obs.csv  # required: the data filesystem path or URL, depending on plugin setup
                 id_field: id  # required for vector data, the field corresponding to the ID
-                uri_field: uri # optional field corresponding to the Uniform Resource Identifier (see Linked Data section)
-                time_field: datetimestamp  # optional field corresponding to the temporal property of the dataset
-                title_field: foo # optional field of which property to display as title/label on HTML pages
-                properties:  # optional: only return the following properties, in order
+
+                # optional fields
+                uri_field: uri  # field corresponding to the Uniform Resource Identifier (see Linked Data section)
+                time_field: datetimestamp  # field corresponding to the temporal property of the dataset
+                title_field: foo  # field of which property to display as title/label on HTML pages
+                default: true  # if not specified, the first provider definition is considered the default
+                properties:  # if specified, return only the following properties, in order
                     - stn_id
                     - value
-                # editable transactions: DO NOT ACTIVATE unless you have setup access control beyond pygeoapi
-                editable: true  # optional: if backend is writable, default is false
-                # coordinate reference systems (CRS) section is optional
-                # default CRSs are http://www.opengis.net/def/crs/OGC/1.3/CRS84 (coordinates without height)
-                # and http://www.opengis.net/def/crs/OGC/1.3/CRS84h (coordinates with ellipsoidal height)
-                crs: # supported coordinate reference systems (CRS) for 'crs' and 'bbox-crs' query parameters
-                    - http://www.opengis.net/def/crs/EPSG/0/28992
-                    - http://www.opengis.net/def/crs/OGC/1.3/CRS84
-                    - http://www.opengis.net/def/crs/EPSG/0/4326
-                storage_crs: http://www.opengis.net/def/crs/OGC/1.3/CRS84 # optional CRS in which data is stored, default: as 'crs' field
-                storage_crs_coordinate_epoch: : 2017.23 # optional, if storage_crs is a dynamic coordinate reference system
-                format:  # optional default format
+                format:  # default format
                     name: GeoJSON  # required: format name
                     mimetype: application/json  # required: format mimetype
                 options:  # optional options to pass to provider (i.e. GDAL creation)
                     option_name: option_value
+                include_extra_query_parameters: false  # include extra query parameters that are not part of the collection properties (default: false)
+                # editable transactions: DO NOT ACTIVATE unless you have setup access control beyond pygeoapi
+                editable: true  # optional: if backend is writable, default is false
+                # count: include `numberMatched` in collection results responses, for providers
+                # that require an additional query to calculate this value (e.g. a SQL COUNT query).
+                count: true  # optional: perform additional count on queries, default is true
+                # coordinate reference systems (CRS) section is optional
+                # default CRSs are http://www.opengis.net/def/crs/OGC/1.3/CRS84 (coordinates without height)
+                # and http://www.opengis.net/def/crs/OGC/1.3/CRS84h (coordinates with ellipsoidal height)
+                crs:  # supported coordinate reference systems (CRS) for 'crs' and 'bbox-crs' query parameters
+                    - http://www.opengis.net/def/crs/EPSG/0/28992
+                    - http://www.opengis.net/def/crs/OGC/1.3/CRS84
+                    - http://www.opengis.net/def/crs/EPSG/0/4326
+                storage_crs: http://www.opengis.net/def/crs/OGC/1.3/CRS84  # optional CRS in which data is stored, default: as 'crs' field
+                storage_crs_coordinate_epoch: 2017.23  # optional, if storage_crs is a dynamic coordinate reference system
+                always_xy: false  # optional should CRS respect axis ordering
+          formatters:  # list of 1..n formatter definitions
+              - name: path.to.formatter  # Python path of formatter definition
+                attachment: true  # whether or not to provide as an attachment or normal response
+                geom: false  # whether or not to include geometry
 
       hello-world:  # name of process
           type: process  # REQUIRED (collection, process, or stac-collection)
           processor:
               name: HelloWorld  # Python path of process definition
+          # optional, allow for internal HTTP request execution
+          # if set to True, enables requests to link local ranges and loopback
+          # default: False
+          allow_internal_requests: True
 
 
 .. seealso::

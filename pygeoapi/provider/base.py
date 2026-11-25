@@ -2,7 +2,7 @@
 #
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2022 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -32,6 +32,7 @@ import logging
 from enum import Enum
 from http import HTTPStatus
 
+from pygeoapi.crs import DEFAULT_STORAGE_CRS, get_crs
 from pygeoapi.error import GenericError
 
 LOGGER = logging.getLogger(__name__)
@@ -56,6 +57,8 @@ class BaseProvider:
         :returns: pygeoapi.provider.base.BaseProvider
         """
 
+        from pygeoapi.util import str2bool
+
         try:
             self.name = provider_def['name']
             self.type = provider_def['type']
@@ -64,17 +67,24 @@ class BaseProvider:
             raise RuntimeError('name/type/data are required')
 
         self.editable = provider_def.get('editable', False)
+        self.count = str2bool(provider_def.get('count', True))
         self.options = provider_def.get('options')
         self.id_field = provider_def.get('id_field')
         self.uri_field = provider_def.get('uri_field')
         self.x_field = provider_def.get('x_field')
         self.y_field = provider_def.get('y_field')
+        self.z_field = provider_def.get('z_field')
         self.time_field = provider_def.get('time_field')
         self.title_field = provider_def.get('title_field')
         self.properties = provider_def.get('properties', [])
         self.file_types = provider_def.get('file_types', [])
+        self.include_extra_query_parameters = provider_def.get('include_extra_query_parameters', False)  # noqa
         self._fields = {}
         self.filename = None
+
+        # CRS properties
+        storage_crs_uri = provider_def.get('storage_crs', DEFAULT_STORAGE_CRS)
+        self.storage_crs = get_crs(storage_crs_uri)
 
         # for coverage providers
         self.axes = []
@@ -141,6 +151,20 @@ class BaseProvider:
 
         :returns: `dict` of metadata construct (format
                   determined by provider/standard)
+        """
+
+        raise NotImplementedError()
+
+    def get_domains(self, properties=[], current=False):
+        """
+        Get domains from dataset
+
+        :param properties: `list` of property names
+        :param current: `bool` of whether to provide list of live
+                        values (default `False`)
+
+        :returns: `tuple` of domains and whether they are based on the
+                  current/live dataset
         """
 
         raise NotImplementedError()
@@ -264,11 +288,32 @@ class BaseProvider:
 
                 msg = 'record already exists'
                 LOGGER.error(msg)
-                raise ProviderInvalidDataError(msg)
+                raise ProviderInvalidDataError(user_msg=msg)
             except ProviderItemNotFoundError:
                 LOGGER.debug('record does not exist')
 
         return identifier2, json_data
+
+    def sanitize_attribute_value(self, value) -> str:
+        """
+        Sanitize an attribute value used in an
+        OGR layer SetAttributeFilter function
+
+        :param value: `str` of attribute value
+
+        :returns: `str` of sanitized attribute value
+        """
+
+        if value is None:
+            return 'NULL'
+
+        if isinstance(value, bool):
+            return '1' if value else '0'
+
+        if isinstance(value, (int, float)):
+            return f"'{value}'"
+
+        return "'" + str(value).replace("'", "''") + "'"
 
     def __repr__(self):
         return f'<BaseProvider> {self.type}'

@@ -21,7 +21,7 @@ reference documentation on all aspects of the project.
 
 .. note::
 
-   Did you know about the `pygeoapi workshop`_?  Ready to get your hands dirty?  Dive in!
+   Did you know about the `Diving into pygeoapi workshop`_?  Ready to get your hands dirty?  Dive in!
 
 .. toctree::
    :maxdepth: 4
@@ -34,17 +34,18 @@ reference documentation on all aspects of the project.
    configuration
    administration
    running
-   running-with-docker
+   docker
    tour
    openapi
-   data-publishing/index
+   publishing/index
    transactions
+   pubsub
    admin-api
    security
    plugins
    html-templating
    crs
-   cql
+   cql2
    language
    development
    ogc-compliance
@@ -61,4 +62,4 @@ Indices and tables
 * :ref:`modindex`
 * :ref:`search`
 
-.. _`pygeoapi workshop`: https://dive.pygeoapi.io
+.. _`Diving into pygeoapi workshop`: https://dive.pygeoapi.io

@@ -4,8 +4,8 @@
 # Authors: Francesco Bartoli <xbartolone@gmail.com>
 # Authors: Ricardo Garcia Silva <ricardo.garcia.silva@geobeyond.it>
 #
-# Copyright (c) 2024 Tom Kralidis
-# Copyright (c) 2022 Francesco Bartoli
+# Copyright (c) 2026 Tom Kralidis
+# Copyright (c) 2025 Francesco Bartoli
 # Copyright (c) 2023 Ricardo Garcia Silva
 #
 # Permission is hereby granted, free of charge, to any person
@@ -47,22 +47,22 @@ from pygeoapi import l10n
 from pygeoapi.api import all_apis
 from pygeoapi.models.openapi import OAPIFormat
 from pygeoapi.util import (filter_dict_by_key_value, to_json, yaml_load,
-                           get_api_rules, get_base_url)
+                           get_api_rules, get_base_url, SCHEMASDIR)
 
 LOGGER = logging.getLogger(__name__)
 
 OPENAPI_YAML = {
+    'cql2': 'https://schemas.opengis.net/cql2/1.0/cql2.json',
     'oapif-1': 'https://schemas.opengis.net/ogcapi/features/part1/1.0/openapi/ogcapi-features-1.yaml',  # noqa
     'oapif-2': 'https://schemas.opengis.net/ogcapi/features/part2/1.0/openapi/ogcapi-features-2.yaml', # noqa
     'oapip': 'https://schemas.opengis.net/ogcapi/processes/part1/1.0/openapi',
-    'oacov': 'https://raw.githubusercontent.com/tomkralidis/ogcapi-coverages-1/fix-cis/yaml-unresolved',  # noqa
+    'oacov': 'https://raw.githubusercontent.com/opengeospatial/ogcapi-coverages/refs/heads/master/standard/openapi/ogcapi-coverages-1.yaml',  # noqa
+    'oamaps': 'https://schemas.opengis.net/ogcapi/maps/part1/1.0/openapi/ogcapi-maps-1.yaml',  # noqa
     'oapir': 'https://raw.githubusercontent.com/opengeospatial/ogcapi-records/master/core/openapi',  # noqa
     'oaedr': 'https://schemas.opengis.net/ogcapi/edr/1.0/openapi', # noqa
     'oapit': 'https://schemas.opengis.net/ogcapi/tiles/part1/1.0/openapi/ogcapi-tiles-1.yaml',  # noqa
     'pygeoapi': 'https://raw.githubusercontent.com/geopython/pygeoapi/master/pygeoapi/schemas/config/pygeoapi-config-0.x.yml'  # noqa
 }
-
-THISDIR = os.path.dirname(os.path.realpath(__file__))
 
 
 def get_ogc_schemas_location(server_config: dict) -> str:
@@ -134,12 +134,13 @@ def gen_response_object(description: str, media_type: str,
     return response
 
 
-def gen_contact(cfg: dict) -> dict:
+def gen_contact(cfg: dict, locale_: str) -> dict:
     """
     Generates an OpenAPI contact object with OGC extensions
     based on OGC API - Records contact
 
     :param cfg: `dict` of configuration
+    :param locale_: `str` of locale
 
     :returns: `dict` of OpenAPI contact object
     """
@@ -148,20 +149,22 @@ def gen_contact(cfg: dict) -> dict:
     has_phones = False
 
     contact = {
-        'name': cfg['metadata']['provider']['name']
+        'name': l10n.translate(cfg['metadata']['provider']['name'], locale_)
     }
 
     for key in ['url', 'email']:
         if key in cfg['metadata']['provider']:
-            contact[key] = cfg['metadata']['provider'][key]
+            contact[key] = l10n.translate(cfg['metadata']['provider'][key],
+                                          locale_)
 
     contact['x-ogc-serviceContact'] = {
-        'name': cfg['metadata']['contact']['name'],
+        'name': l10n.translate(cfg['metadata']['contact']['name'], locale_),
         'addresses': []
     }
 
     if 'position' in cfg['metadata']['contact']:
-        contact['x-ogc-serviceContact']['position'] = cfg['metadata']['contact']['position']  # noqa
+        contact['x-ogc-serviceContact']['position'] = l10n.translate(
+            cfg['metadata']['contact']['position'], locale_)
 
     if any(address in ['address', 'city', 'stateorprovince', 'postalcode', 'country'] for address in cfg['metadata']['contact']):  # noqa
         has_addresses = True
@@ -169,19 +172,24 @@ def gen_contact(cfg: dict) -> dict:
     if has_addresses:
         address = {}
         if 'address' in cfg['metadata']['contact']:
-            address['deliveryPoint'] = [cfg['metadata']['contact']['address']]
+            address['deliveryPoint'] = [l10n.translate(
+                cfg['metadata']['contact']['address'], locale_)]
 
         if 'city' in cfg['metadata']['contact']:
-            address['city'] = cfg['metadata']['contact']['city']
+            address['city'] = l10n.translate(
+                cfg['metadata']['contact']['city'], locale_)
 
         if 'stateorprovince' in cfg['metadata']['contact']:
-            address['administrativeArea'] = cfg['metadata']['contact']['stateorprovince']  # noqa
+            address['administrativeArea'] = l10n.translate(
+                cfg['metadata']['contact']['stateorprovince'], locale_)
 
         if 'postalCode' in cfg['metadata']['contact']:
-            address['administrativeArea'] = cfg['metadata']['contact']['postalCode']  # noqa
+            address['administrativeArea'] = l10n.translate(
+                cfg['metadata']['contact']['postalCode'], locale_)
 
         if 'country' in cfg['metadata']['contact']:
-            address['administrativeArea'] = cfg['metadata']['contact']['country']  # noqa
+            address['administrativeArea'] = l10n.translate(
+                cfg['metadata']['contact']['country'], locale_)
 
         contact['x-ogc-serviceContact']['addresses'].append(address)
 
@@ -192,33 +200,39 @@ def gen_contact(cfg: dict) -> dict:
     if has_phones:
         if 'phone' in cfg['metadata']['contact']:
             contact['x-ogc-serviceContact']['phones'].append({
-                'type': 'main', 'value': cfg['metadata']['contact']['phone']
+                'type': 'main', 'value': l10n.translate(
+                    cfg['metadata']['contact']['phone'], locale_)
             })
 
         if 'fax' in cfg['metadata']['contact']:
             contact['x-ogc-serviceContact']['phones'].append({
-                'type': 'fax', 'value': cfg['metadata']['contact']['fax']
+                'type': 'fax', 'value': l10n.translate(
+                    cfg['metadata']['contact']['fax'], locale_)
             })
 
     if 'email' in cfg['metadata']['contact']:
         contact['x-ogc-serviceContact']['emails'] = [{
-            'value': cfg['metadata']['contact']['email']
+            'value': l10n.translate(
+                cfg['metadata']['contact']['email'], locale_)
         }]
 
     if 'url' in cfg['metadata']['contact']:
         contact['x-ogc-serviceContact']['links'] = [{
             'type': 'text/html',
-            'href': cfg['metadata']['contact']['url']
+            'href': l10n.translate(cfg['metadata']['contact']['url'], locale_)
         }]
 
     if 'instructions' in cfg['metadata']['contact']:
-        contact['x-ogc-serviceContact']['contactInstructions'] = cfg['metadata']['contact']['instructions']  # noqa
+        contact['x-ogc-serviceContact']['contactInstructions'] = l10n.translate(  # noqa
+            cfg['metadata']['contact']['instructions'], locale_)
 
     if 'hours' in cfg['metadata']['contact']:
-        contact['x-ogc-serviceContact']['hoursOfService'] = cfg['metadata']['contact']['hours']  # noqa
+        contact['x-ogc-serviceContact']['hoursOfService'] = l10n.translate(
+            cfg['metadata']['contact']['hours'], locale_)
 
     if 'role' in cfg['metadata']['contact']:
-        contact['x-ogc-serviceContact']['hoursOfService'] = cfg['metadata']['contact']['role']  # noqa
+        contact['x-ogc-serviceContact']['hoursOfService'] = l10n.translate(
+            cfg['metadata']['contact']['role'], locale_)
 
     return contact
 
@@ -255,11 +269,11 @@ def get_oas_30(cfg: dict, fail_on_invalid_collection: bool = True) -> dict:
         'description': l10n.translate(cfg['metadata']['identification']['description'], locale_),  # noqa
         'x-keywords': l10n.translate(cfg['metadata']['identification']['keywords'], locale_),  # noqa
         'termsOfService':
-            cfg['metadata']['identification']['terms_of_service'],
-        'contact': gen_contact(cfg),
+            l10n.translate(cfg['metadata']['identification']['terms_of_service'], locale_),  # noqa
+        'contact': gen_contact(cfg, locale_),
         'license': {
-            'name': cfg['metadata']['license']['name'],
-            'url': cfg['metadata']['license']['url']
+            'name': l10n.translate(cfg['metadata']['license']['name'], locale_),  # noqa
+            'url': l10n.translate(cfg['metadata']['license']['url'], locale_)
         },
         'version': api_rules.api_version
     }
@@ -360,7 +374,7 @@ def get_oas_30(cfg: dict, fail_on_invalid_collection: bool = True) -> dict:
             'description': l10n.translate(cfg['metadata']['identification']['description'], locale_),  # noqa
             'externalDocs': {
                 'description': 'information',
-                'url': cfg['metadata']['identification']['url']}
+                'url': l10n.translate(cfg['metadata']['identification']['url'], locale_)}  # noqa
         }
     )
 
@@ -410,9 +424,7 @@ def get_oas_30(cfg: dict, fail_on_invalid_collection: bool = True) -> dict:
                     'language': {
                         'description': 'the language used for the title and description', # noqa
                         'type': 'string',
-                        'default': [
-                            'en'
-                        ]
+                        'default': 'en'
                     },
                     'type': {
                         'description': 'the data type of the queryable', # noqa
@@ -540,6 +552,11 @@ def get_oas_30(cfg: dict, fail_on_invalid_collection: bool = True) -> dict:
 
         try:
             sub_tags, sub_paths = api_module.get_oas_30(cfg, locale_)
+
+            if not sub_tags and not sub_paths:
+                LOGGER.debug('Empty content from {api_name}; skipping')
+                continue
+
             oas['paths'].update(sub_paths['paths'])
             oas['tags'].extend(sub_tags)
         except Exception as err:
@@ -669,6 +686,20 @@ def get_oas_30_parameters(cfg: dict, locale_: str):
             'style': 'form',
             'explode': False
         },
+        'properties': {
+            'name': 'properties',
+            'in': 'query',
+            'description': 'The properties that should be included. The parameter value is a comma-separated list of property names.',  # noqa
+            'required': False,
+            'style': 'form',
+            'explode': False,
+            'schema': {
+                'type': 'array',
+                'items': {
+                    'type': 'string'
+                }
+            }
+        },
         'vendorSpecificParameters': {
             'name': 'vendorSpecificParameters',
             'in': 'query',
@@ -708,10 +739,9 @@ def get_visible_collections(cfg: dict) -> dict:
 
 
 def get_config_schema():
-    schema_file = os.path.join(THISDIR, 'schemas', 'config',
-                               'pygeoapi-config-0.x.yml')
+    schema_file = SCHEMASDIR / 'config' / 'pygeoapi-config-0.x.yml'
 
-    with open(schema_file) as fh2:
+    with schema_file.open() as fh2:
         return yaml_load(fh2)
 
 
@@ -720,10 +750,32 @@ def get_admin(cfg: dict) -> dict:
     schema_dict = get_config_schema()
 
     paths = {}
-
-    res_eg_key = next(iter(cfg['resources']))
+    if cfg['resources']:
+        res_eg_key = next(iter(cfg['resources']))
+    else:
+        res_eg_key = 'example'
     res_eg = {
         res_eg_key: cfg['resources'][res_eg_key]
+    } if cfg['resources'] else {
+        'example': {
+            'type': 'collection',
+            'title': 'Example',
+            'description': 'Example',
+            'keywords': ['example'],
+            'links': [],
+            'linked-data': {},
+            'extents': {
+                'spatial': {
+                    'bbox': [-180, -90, 180, 90],
+                    'crs': 'http://www.opengis.net/def/crs/OGC/1.3/CRS84'
+                },
+                'temporal': {
+                    'begin': '2000-10-30T18:24:39Z',
+                    'end': '2007-10-30T08:57:29Z',
+                    'trs': 'http://www.opengis.net/def/uom/ISO-8601/0/Gregorian'  # noqa
+                }
+            }
+        }
     }
     if 'extents' in res_eg[res_eg_key]:
         res_eg_eg_key = 'extents'
@@ -828,7 +880,7 @@ def get_admin(cfg: dict) -> dict:
                 'description': 'Adds resource to configuration',
                 'content': {
                     'application/json': {
-                        'example': {'new-collection': cfg['resources'][res_eg_key]}, # noqa
+                        'example': {'new-collection': cfg['resources'][res_eg_key] if cfg['resources'] else res_eg['example'] }, # noqa
                         'schema': schema_dict['properties']['resources']['patternProperties']['^.*$']  # noqa
                     }
                 },
@@ -959,10 +1011,10 @@ def validate_openapi_document(instance_dict: dict) -> bool:
     :returns: `bool` of validation
     """
 
-    schema_file = os.path.join(THISDIR, 'schemas', 'openapi',
-                               'openapi-3.0.x.json')
+    schema_file = SCHEMASDIR / 'openapi' / 'openapi-3.0.x.json'
 
-    with open(schema_file) as fh2:
+    LOGGER.debug(f'Validating against {schema_file}')
+    with schema_file.open() as fh2:
         schema_dict = json.load(fh2)
         jsonschema_validate(instance_dict, schema_dict)
 

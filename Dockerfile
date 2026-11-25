@@ -5,10 +5,10 @@
 #          Francesco Bartoli <xbartolone@gmail.com>
 #          Angelos Tzotsos <gcpp.kalxas@gmail.com>
 #
-# Copyright (c) 2020 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 # Copyright (c) 2019 Just van den Broecke
-# Copyright (c) 2020 Francesco Bartoli
-# Copyright (c) 2024 Angelos Tzotsos
+# Copyright (c) 2025 Francesco Bartoli
+# Copyright (c) 2025 Angelos Tzotsos
 # Copyright (c) 2023 Bernhard Mallinger
 #
 # Permission is hereby granted, free of charge, to any person
@@ -34,11 +34,11 @@
 #
 # =================================================================
 
-FROM ubuntu:jammy-20240911.1
+FROM ubuntu:noble
 
 LABEL maintainer="Just van den Broecke <justb4@gmail.com>"
 
-# Docker file for full geoapi server with libs/packages for all providers.
+# Dockerfile for a full pygeoapi server with libs/packages for all providers.
 # Server runs with gunicorn. You can override ENV settings.
 # Defaults:
 # SCRIPT_NAME=/
@@ -48,6 +48,7 @@ LABEL maintainer="Just van den Broecke <justb4@gmail.com>"
 # WSGI_WORKERS=4
 # WSGI_WORKER_TIMEOUT=6000
 # WSGI_WORKER_CLASS=gevent
+# PYGEOAPI_OPENAPI_GENERATE_FAIL_ON_INVALID_COLLECTION=true
 
 # Calls entrypoint.sh to run. Inspect it for options.
 # Contains some test data. Also allows you to verify by running all unit tests.
@@ -69,6 +70,7 @@ ARG ADD_DEB_PACKAGES="\
     python3-netcdf4 \
     python3-pandas \
     python3-psycopg2 \
+    python3-pydantic \
     python3-pymongo \
     python3-pyproj \
     python3-rasterio \
@@ -92,20 +94,20 @@ ENV TZ=${TZ} \
     DEB_PACKAGES="\
     locales \
     tzdata \
-    gunicorn \
     python3-dateutil \
     python3-gevent \
     python3-greenlet \
     python3-pip \
     python3-tz \
+    python3-venv \
     python3-yaml \
-    ${ADD_DEB_PACKAGES}"
+    ${ADD_DEB_PACKAGES}" \
+    PROJ_LIB=/usr/share/proj
 
 WORKDIR /pygeoapi
 
 # Install operating system dependencies
-RUN \
-    apt-get update -y \
+RUN apt-get update -y \
     && apt-get install -y ${DEB_BUILD_DEPS} \
     && add-apt-repository ppa:ubuntugis/ubuntugis-unstable \
     && apt-get --no-install-recommends install -y ${DEB_PACKAGES} \
@@ -125,21 +127,21 @@ RUN \
     && apt autoremove -y  \
     && rm -rf /var/lib/apt/lists/*
 
-ADD requirements-docker.txt requirements-admin.txt /pygeoapi/
-# Install remaining pygeoapi deps
-RUN python3 -m pip install --no-cache-dir -r requirements-docker.txt \
-    && python3 -m pip install --no-cache-dir -r requirements-admin.txt
-
-
 ADD . /pygeoapi
 
- # Install pygeoapi
-RUN python3 -m pip install --no-cache-dir -e . 
+# Install remaining pygeoapi deps and pygeoapi itself
+RUN python3 -m venv --system-site-packages /venv \
+    && /venv/bin/python3 -m pip install --no-cache-dir -r requirements-docker.txt \
+    && /venv/bin/python3 -m pip install --no-cache-dir -r requirements-admin.txt \
+    && /venv/bin/python3 -m pip install --no-cache-dir "gunicorn<24" \
+    && /venv/bin/python3 -m pip install --no-cache-dir -e .
 
-RUN \ 
-    # Set default config and entrypoint for Docker Image
-    cp /pygeoapi/docker/default.config.yml /pygeoapi/local.config.yml \
-    && cp /pygeoapi/docker/entrypoint.sh /entrypoint.sh 
+# Set default config and entrypoint for Docker Image
+# and compile language files
+RUN cp /pygeoapi/docker/default.config.yml /pygeoapi/local.config.yml \
+    && cp /pygeoapi/docker/entrypoint.sh /entrypoint.sh \
+    && cd /pygeoapi \
+    && for i in locale/*; do if [ "$i" != "locale/README.md" ]; then echo $i && pybabel compile -d locale -l `basename $i`; fi; done \
+    && chmod -R g=u /pygeoapi
 
 ENTRYPOINT ["/entrypoint.sh"]
-

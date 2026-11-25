@@ -3,7 +3,7 @@
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #          Francesco Martinelli <francesco.martinelli@ingv.it>
 #
-# Copyright (c) 2022 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 # Copyright (c) 2024 Francesco Martinelli
 #
 # Permission is hereby granted, free of charge, to any person
@@ -53,6 +53,8 @@ class BaseProcessor:
         self.name = processor_def['name']
         self.metadata = process_metadata
         self.supports_outputs = False
+        self.allow_internal_requests = processor_def.get(
+            'allow_internal_requests', False)
 
     def set_job_id(self, job_id: str) -> None:
         """
@@ -82,7 +84,7 @@ class BaseProcessor:
                         The value of any key may be an object and include the
                         property `transmissionMode` - defaults to `value`.
         :returns: tuple of MIME type and process response
-                  (string or bytes, or dict)
+                  (string, bytes, list or dict)
         """
 
         raise NotImplementedError()

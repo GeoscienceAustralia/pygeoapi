@@ -2,7 +2,7 @@
 #
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2024 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -53,11 +53,13 @@ PLUGINS = {
         'MVT-tippecanoe': 'pygeoapi.provider.mvt_tippecanoe.MVTTippecanoeProvider',  # noqa: E501
         'MVT-elastic': 'pygeoapi.provider.mvt_elastic.MVTElasticProvider',
         'MVT-proxy': 'pygeoapi.provider.mvt_proxy.MVTProxyProvider',
+        'MySQL': 'pygeoapi.provider.sql.MySQLProvider',
+        'MVT-postgresql': 'pygeoapi.provider.mvt_postgresql.MVTPostgreSQLProvider',  # noqa: E501
         'OracleDB': 'pygeoapi.provider.oracle.OracleProvider',
         'OGR': 'pygeoapi.provider.ogr.OGRProvider',
         'OpenSearch': 'pygeoapi.provider.opensearch_.OpenSearchProvider',
         'Parquet': 'pygeoapi.provider.parquet.ParquetProvider',
-        'PostgreSQL': 'pygeoapi.provider.postgresql.PostgreSQLProvider',
+        'PostgreSQL': 'pygeoapi.provider.sql.PostgreSQLProvider',
         'rasterio': 'pygeoapi.provider.rasterio_.RasterioProvider',
         'SensorThings': 'pygeoapi.provider.sensorthings.SensorThingsProvider',
         'SensorThingsEDR': 'pygeoapi.provider.sensorthings_edr.SensorThingsEDRProvider',  # noqa: E501
@@ -83,6 +85,11 @@ PLUGINS = {
         'MongoDB': 'pygeoapi.process.manager.mongodb_.MongoDBManager',
         'TinyDB': 'pygeoapi.process.manager.tinydb_.TinyDBManager',
         'PostgreSQL': 'pygeoapi.process.manager.postgresql.PostgreSQLManager'
+    },
+    'pubsub': {
+        'HTTP': 'pygeoapi.pubsub.http.HTTPPubSubClient',
+        'Kafka': 'pygeoapi.pubsub.kafka.KafkaPubSubClient',
+        'MQTT': 'pygeoapi.pubsub.mqtt.MQTTPubSubClient'
     }
 }
 

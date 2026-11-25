@@ -1,8 +1,10 @@
 # =================================================================
 #
 # Authors: Francesco Martinelli <francesco.martinelli@ingv.it>
+#          Tom Kralidis <tomkralidis@gmail.com>
 #
 # Copyright (c) 2024 Francesco Martinelli
+# Copyright (c) 2026 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -27,36 +29,35 @@
 #
 # =================================================================
 
-# Requires postgresql database structure.
-# Create the database:
-# e.g.
-# CREATE DATABASE test
-#   WITH TEMPLATE = template0
-#   ENCODING = 'UTF8'
-#   LOCALE = 'en_US.UTF-8';
-# ALTER DATABASE test OWNER TO postgres;
-#
-# Import dump:
-# psql -U postgres -h 127.0.0.1 -p 5432 test <
-#   tests/data/postgres_manager_full_structure.backup.sql
-
+import functools
 import json
 import logging
 from pathlib import Path
 from typing import Any, Tuple
 
-from sqlalchemy import insert, update, delete
-from sqlalchemy.engine import make_url
-from sqlalchemy.orm import Session
+from sqlalchemy import (
+    Column,
+    DateTime,
+    delete,
+    insert,
+    Integer,
+    LargeBinary,
+    String,
+    Table,
+    text,
+    update
+)
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import declarative_base, Session
 
-from pygeoapi.api import FORMAT_TYPES, F_JSON, F_JSONLD
+from pygeoapi.formats import F_JSON, F_JSONLD, FORMAT_TYPES
 from pygeoapi.process.base import (
     JobNotFoundError,
     JobResultNotFoundError,
     ProcessorGenericError
 )
 from pygeoapi.process.manager.base import BaseManager
-from pygeoapi.provider.postgresql import get_engine, get_table_model
+from pygeoapi.provider.sql import get_engine, store_db_parameters
 from pygeoapi.util import JobStatus
 
 
@@ -66,13 +67,16 @@ LOGGER = logging.getLogger(__name__)
 class PostgreSQLManager(BaseManager):
     """PostgreSQL Manager"""
 
+    default_port = 5432
+    _store_db_parameters = store_db_parameters
+
     def __init__(self, manager_def: dict):
         """
         Initialize object
 
         :param manager_def: manager definition
 
-        :returns: `pygeoapi.process.manager.postgresqs.PostgreSQLManager`
+        :returns: `pygeoapi.process.manager.postgresql.PostgreSQLManager`
         """
 
         super().__init__(manager_def)
@@ -81,44 +85,35 @@ class PostgreSQLManager(BaseManager):
         self.supports_subscribing = True
         self.connection = manager_def['connection']
 
-        try:
-            self.db_search_path = tuple(self.connection.get('search_path',
-                                        ['public']))
-        except Exception:
-            self.db_search_path = ('public',)
+        options = manager_def.get('options', {})
+        self._store_db_parameters(manager_def['connection'], options)
+        self._engine = get_engine(
+            'postgresql+psycopg2',
+            self.db_host,
+            self.db_port,
+            self.db_name,
+            self.db_user,
+            self._db_password,
+            self.db_conn,
+            **self.db_options
+        )
+        self.table_output = self.output_dir is None
 
-        try:
-            LOGGER.debug('Connecting to database')
-            if isinstance(self.connection, str):
-                _url = make_url(self.connection)
-                self._engine = get_engine(
-                    _url.host,
-                    _url.port,
-                    _url.database,
-                    _url.username,
-                    _url.password)
-            else:
-                self._engine = get_engine(**self.connection)
-        except Exception as err:
-            msg = 'Test connecting to DB failed'
-            LOGGER.error(f'{msg}: {err}')
-            raise ProcessorGenericError(msg)
-
+        self.table_model = get_table_model(
+            self.db_search_path, self._engine, self.table_output
+        )
+        self.c = self.table_model.c
         try:
             LOGGER.debug('Getting table model')
-            self.table_model = get_table_model(
-                'jobs',
-                self.id_field,
-                self.db_search_path,
-                self._engine
-            )
+
         except Exception as err:
             msg = 'Table model fetch failed'
             LOGGER.error(f'{msg}: {err}')
             raise ProcessorGenericError(msg)
 
-    def get_jobs(self, status: JobStatus = None, limit=None, offset=None
-                 ) -> dict:
+    def get_jobs(
+        self, status: JobStatus = None, limit=None, offset=None
+    ) -> dict:
         """
         Get jobs
 
@@ -134,15 +129,12 @@ class PostgreSQLManager(BaseManager):
         LOGGER.debug('Querying for jobs')
         with Session(self._engine) as session:
             results = session.query(self.table_model)
-            if status is not None:
-                column = getattr(self.table_model, 'status')
-                results = results.filter(column == status.value)
 
-            jobs = [r.__dict__ for r in results.all()]
-            return {
-                'jobs': jobs,
-                'numberMatched': len(jobs)
-            }
+            if status is not None:
+                results = results.filter(self.c.status == status.value)
+
+            jobs = [r._asdict() for r in results.all()]
+            return {'jobs': jobs, 'numberMatched': len(jobs)}
 
     def add_job(self, job_metadata: dict) -> str:
         """
@@ -156,8 +148,9 @@ class PostgreSQLManager(BaseManager):
         LOGGER.debug('Adding job')
         with Session(self._engine) as session:
             try:
-                session.execute(insert(self.table_model)
-                                .values(**job_metadata))
+                session.execute(
+                    insert(self.table_model).values(**job_metadata)
+                )
                 session.commit()
             except Exception as err:
                 session.rollback()
@@ -182,10 +175,9 @@ class PostgreSQLManager(BaseManager):
         LOGGER.debug('Updating job')
         with Session(self._engine) as session:
             try:
-                column = getattr(self.table_model, self.id_field)
                 stmt = (
                     update(self.table_model)
-                    .where(column == job_id)
+                    .where(self.c.identifier == job_id)
                     .values(**update_dict)
                 )
                 result = session.execute(stmt)
@@ -212,14 +204,14 @@ class PostgreSQLManager(BaseManager):
 
         LOGGER.debug('Querying for job')
         with Session(self._engine) as session:
-            results = session.query(self.table_model)
-            column = getattr(self.table_model, self.id_field)
-            results = session.query(self.table_model).filter(column == job_id)
+            results = session.query(self.table_model).filter(
+                self.c.identifier == job_id
+            )
 
             first = results.first()
 
             if first is not None:
-                return first.__dict__
+                return first._asdict()
             else:
                 raise JobNotFoundError()
 
@@ -243,10 +235,8 @@ class PostgreSQLManager(BaseManager):
         LOGGER.debug('Deleting job')
         with Session(self._engine) as session:
             try:
-                column = getattr(self.table_model, self.id_field)
-                stmt = (
-                    delete(self.table_model)
-                    .where(column == job_id)
+                stmt = delete(self.table_model).where(
+                    self.c.identifier == job_id
                 )
                 result = session.execute(stmt)
                 session.commit()
@@ -293,8 +283,11 @@ class PostgreSQLManager(BaseManager):
         else:
             try:
                 location = Path(location)
-                if mimetype in (None, FORMAT_TYPES[F_JSON],
-                                FORMAT_TYPES[F_JSONLD]):
+                if mimetype in (
+                    None,
+                    FORMAT_TYPES[F_JSON],
+                    FORMAT_TYPES[F_JSONLD]
+                ):
                     with location.open('r', encoding='utf-8') as fh:
                         result = json.load(fh)
                 else:
@@ -307,3 +300,43 @@ class PostgreSQLManager(BaseManager):
 
     def __repr__(self):
         return f'<PostgreSQLManager> {self.name}'
+
+
+@functools.cache
+def get_table_model(
+    db_search_path: tuple[str], engine: Engine, table_output: bool
+) -> Any:
+    """Define SQLAlchemy job model"""
+
+    Base = declarative_base()
+    schema = db_search_path[0]
+
+    Jobs = Table(
+        'jobs',
+        Base.metadata,
+        Column('identifier', String, primary_key=True, nullable=False),
+        Column(
+            'type',
+            String,
+            nullable=False,
+            server_default=text("'process'::character varying")
+        ),
+        Column('process_id', String, nullable=False),
+        Column('created', DateTime),
+        Column('started', DateTime),
+        Column('finished', DateTime),
+        Column('updated', DateTime),
+        Column('status', String, nullable=False),
+        Column('location', String),
+        Column('mimetype', String),
+        Column('message', String),
+        Column('progress', Integer, nullable=False),
+        schema=schema
+    )
+
+    if table_output:
+        Jobs.append_column(Column('output', LargeBinary))
+
+    Base.metadata.create_all(engine, tables=[Jobs], checkfirst=True)
+
+    return Jobs

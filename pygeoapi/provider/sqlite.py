@@ -6,7 +6,7 @@
 #
 # Copyright (c) 2018 Jorge Samuel Mendes de Jesus
 # Copyright (c) 2023 Tom Kralidis
-# Copyright (c) 2020 Francesco Bartoli
+# Copyright (c) 2025 Francesco Bartoli
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -35,10 +35,11 @@ import sqlite3
 import logging
 import os
 import json
+
+from pygeoapi.crs import crs_transform
 from pygeoapi.plugin import InvalidPluginError
 from pygeoapi.provider.base import (BaseProvider, ProviderConnectionError,
                                     ProviderItemNotFoundError)
-from pygeoapi.util import crs_transform
 
 LOGGER = logging.getLogger(__name__)
 
@@ -162,23 +163,11 @@ class SQLiteGPKGProvider(BaseProvider):
                 LOGGER.warning('Missing geometry')
 
             feature['properties'] = rd
-            feature['id'] = feature['properties'].pop(self.id_field)
+            feature['id'] = feature['properties'][self.id_field]
 
             return feature
         else:
             return None
-
-    def __response_feature_hits(self, hits):
-        """Assembles GeoJSON/Feature number
-
-        :returns: GeoJSON FeaturesCollection
-        """
-
-        feature_collection = {"features": [],
-                              "type": "FeatureCollection"}
-        feature_collection['numberMatched'] = hits
-
-        return feature_collection
 
     def __load(self):
         """
@@ -304,14 +293,25 @@ class SQLiteGPKGProvider(BaseProvider):
         where_clause, where_values = self.__get_where_clauses(
             properties=properties, bbox=bbox)
 
-        if resulttype == 'hits':
+        feature_collection = {
+            'type': 'FeatureCollection',
+            'features': []
+        }
 
-            sql_query = f"SELECT COUNT(*) as hits FROM {self.table} {where_clause} "  # noqa
+        if self.count or resulttype == 'hits':
+
+            sql_query = (
+                'SELECT COUNT(*) as hits '
+                f'FROM {self.table} {where_clause}'
+            )
 
             res = self.cursor.execute(sql_query, where_values)
 
-            hits = res.fetchone()["hits"]
-            return self.__response_feature_hits(hits)
+            hits = res.fetchone()['hits']
+            feature_collection['numberMatched'] = hits
+
+        if resulttype == 'hits':
+            return feature_collection
 
         sql_query = f"SELECT DISTINCT {self.columns} from \
             {self.table} {where_clause} limit ? offset ?"
@@ -325,14 +325,12 @@ class SQLiteGPKGProvider(BaseProvider):
         row_data = self.cursor.execute(
             sql_query, where_values + (limit, offset))
 
-        feature_collection = {
-            'type': 'FeatureCollection',
-            'features': []
-        }
-
+        feature_collection['numberReturned'] = 0
         for rd in row_data:
             feature_collection['features'].append(
-                self.__response_feature(rd, skip_geometry=skip_geometry))
+                self.__response_feature(rd, skip_geometry=skip_geometry)
+            )
+            feature_collection['numberReturned'] += 1
 
         return feature_collection
 

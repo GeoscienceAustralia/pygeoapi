@@ -36,7 +36,7 @@ from pygeoapi.provider.base_edr import BaseEDRProvider
 from pygeoapi.provider.xarray_ import (
     _to_datetime_string,
     _convert_float32_to_float64,
-    XarrayProvider,
+    XarrayProvider
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -57,7 +57,6 @@ class XarrayEDRProvider(BaseEDRProvider, XarrayProvider):
         BaseEDRProvider.__init__(self, provider_def)
         XarrayProvider.__init__(self, provider_def)
 
-    @BaseEDRProvider.register()
     def position(self, **kwargs):
         """
         Extract data from collection collection
@@ -74,9 +73,8 @@ class XarrayEDRProvider(BaseEDRProvider, XarrayProvider):
 
         query_params = {}
 
+        LOGGER.debug('Query type: position')
         LOGGER.debug(f'Query parameters: {kwargs}')
-
-        LOGGER.debug(f"Query type: {kwargs.get('query_type')}")
 
         wkt = kwargs.get('wkt')
         if wkt is not None:
@@ -105,11 +103,21 @@ class XarrayEDRProvider(BaseEDRProvider, XarrayProvider):
         if datetime_ is not None:
             query_params[self.time_field] = self._make_datetime(datetime_)
 
+        z = kwargs.get('z')
+        if z is not None:
+            if self.z_field is not None:
+                query_params[self.z_field] = z
+            else:
+                LOGGER.debug('No vertical level found')
+
         LOGGER.debug(f'query parameters: {query_params}')
 
         try:
             if select_properties:
-                self._fields = {k: v for k, v in self._fields.items() if k in select_properties}  # noqa
+                self._fields = {
+                    k: v for k, v in self._fields.items()
+                    if k in select_properties
+                }
                 data = self._data[[*select_properties]]
             else:
                 data = self._data
@@ -150,18 +158,17 @@ class XarrayEDRProvider(BaseEDRProvider, XarrayProvider):
         bbox = wkt.bounds
         out_meta = {
             'bbox': [bbox[0], bbox[1], bbox[2], bbox[3]],
-            "time": time,
-            "driver": "xarray",
-            "height": height,
-            "width": width,
-            "time_steps": time_steps,
-            "variables": {var_name: var.attrs
+            'time': time,
+            'driver': 'xarray',
+            'height': height,
+            'width': width,
+            'time_steps': time_steps,
+            'variables': {var_name: var.attrs
                           for var_name, var in data.variables.items()}
         }
 
         return self.gen_covjson(out_meta, data, self.fields)
 
-    @BaseEDRProvider.register()
     def cube(self, **kwargs):
         """
         Extract data from collection
@@ -178,12 +185,11 @@ class XarrayEDRProvider(BaseEDRProvider, XarrayProvider):
 
         query_params = {}
 
+        LOGGER.debug('Query type: cube')
         LOGGER.debug(f'Query parameters: {kwargs}')
 
-        LOGGER.debug(f"Query type: {kwargs.get('query_type')}")
-
         bbox = kwargs.get('bbox')
-        xmin, ymin, xmax, ymax = self._configure_bbox(bbox)
+        xmin, ymin, xmax, ymax = self._configure_bbox()
 
         if len(bbox) == 4:
             query_params[self.x_field] = slice(bbox[xmin], bbox[xmax])
@@ -203,15 +209,17 @@ class XarrayEDRProvider(BaseEDRProvider, XarrayProvider):
         if datetime_ is not None:
             query_params[self.time_field] = self._make_datetime(datetime_)
 
+        fields = {
+            field: self.fields[field]
+            for field in select_properties
+            if field in self.fields
+        } if select_properties else self.fields
+
         LOGGER.debug(f'query parameters: {query_params}')
         try:
-            if select_properties:
-                self._fields = {k: v for k, v in self._fields.items() if k in select_properties}  # noqa
-                data = self._data[[*select_properties]]
-            else:
-                data = self._data
-            data = data.sel(query_params)
-            data = _convert_float32_to_float64(data)
+            data = _convert_float32_to_float64(
+                self._data[[*fields]].sel(query_params)
+            )
         except KeyError:
             raise ProviderNoDataError()
 
@@ -226,16 +234,18 @@ class XarrayEDRProvider(BaseEDRProvider, XarrayProvider):
                 data.coords[self.x_field].values[-1],
                 data.coords[self.y_field].values[-1]
             ],
-            "time": time,
-            "driver": "xarray",
-            "height": height,
-            "width": width,
-            "time_steps": time_steps,
-            "variables": {var_name: var.attrs
-                          for var_name, var in data.variables.items()}
+            'time': time,
+            'driver': 'xarray',
+            'height': height,
+            'width': width,
+            'time_steps': time_steps,
+            'variables': {
+                var_name: var.attrs
+                for var_name, var in data.variables.items()
+            }
         }
 
-        return self.gen_covjson(out_meta, data, self.fields)
+        return self.gen_covjson(out_meta, data, fields)
 
     def _make_datetime(self, datetime_):
         """
@@ -295,7 +305,7 @@ class XarrayEDRProvider(BaseEDRProvider, XarrayProvider):
             time_steps = kwargs.get('limit')
         return time, time_steps
 
-    def _configure_bbox(self, bbox):
+    def _configure_bbox(self):
         xmin, ymin, xmax, ymax = 0, 1, 2, 3
         if self._data[self.x_field][0] > self._data[self.x_field][-1]:
             xmin, xmax = xmax, xmin

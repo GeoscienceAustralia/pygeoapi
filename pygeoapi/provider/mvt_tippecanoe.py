@@ -1,8 +1,12 @@
 # =================================================================
 #
 # Authors: Joana Simoes <jo@byteroad.net>
+#          Francesco Bartoli <xbartolone@gmail.com>
+#          Tom Kralidis <tomkralidis@gmail.com>
 #
 # Copyright (c) 2023 Joana Simoes
+# Copyright (c) 2025 Francesco Bartoli
+# Copyright (c) 2026 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -137,11 +141,9 @@ class MVTTippecanoeProvider(BaseMVTProvider):
             return Path(self.data).name
 
     def get_tiling_schemes(self):
+        "Only WebMercatorQuad tiling scheme is supported in tippecanoe"
 
-        "Only WebMercatorQuad tiling scheme is supported in elastic"
-        return [
-                TileMatrixSetEnum.WEBMERCATORQUAD.value
-            ]
+        return [TileMatrixSetEnum.WEBMERCATORQUAD.value]
 
     def get_tiles_service(self, baseurl=None, servicepath=None,
                           dirpath=None, tile_type=None):
@@ -185,7 +187,7 @@ class MVTTippecanoeProvider(BaseMVTProvider):
         try:
             with requests.Session() as session:
                 session.get(base_url)
-                resp = session.get(f'{base_url}/{layer}/{z}/{y}/{x}{extension}')  # noqa
+                resp = session.get(f'{base_url}/{layer}/{z}/{x}/{y}{extension}')  # noqa
 
                 if resp.status_code == 404:
                     if (self.is_in_limits(TileMatrixSetEnum.WEBMERCATORQUAD.value, z, x, y)): # noqa
@@ -216,7 +218,7 @@ class MVTTippecanoeProvider(BaseMVTProvider):
         """
 
         try:
-            service_url_path = self.service_url.joinpath(f'{z}/{y}/{x}.{format_}')  # noqa
+            service_url_path = self.service_url.joinpath(f'{z}/{x}/{y}.{format_}')  # noqa
             with open(service_url_path, mode='rb') as tile:
                 return tile.read()
         except FileNotFoundError as err:
@@ -297,13 +299,13 @@ class MVTTippecanoeProvider(BaseMVTProvider):
         metadata['json_url'] = f'{metadata_url}?f=json'
 
         try:
-            metadata_json_content = self.get_metadata_from_URL(self.service_metadata_url) # noqa
+            metadata_json_content = self.get_metadata_from_URL(self.service_metadata_url)  # noqa
 
             content = MVTTilesJson(**metadata_json_content)
             content.tiles = service_url
             content.vector_layers = json.loads(
-                    metadata_json_content["json"])["vector_layers"]
-            metadata['metadata'] = content.dict()
+                metadata_json_content["json"])["vector_layers"]
+            metadata['metadata'] = content.model_dump()
             # Some providers may not implement tilejson metadata
             metadata['tilejson_url'] = f'{metadata_url}?f=tilejson'
         except ProviderConnectionError:
@@ -336,15 +338,19 @@ class MVTTippecanoeProvider(BaseMVTProvider):
                 tiling_scheme_url = url_join(
                     server_url, f'/TileMatrixSets/{schema.tileMatrixSet}')
                 tiling_scheme_url_type = "application/json"
-                tiling_scheme_url_title = f'{schema.tileMatrixSet} tile matrix set definition' # noqa
+                tiling_scheme_url_title = f'{schema.tileMatrixSet} tile matrix set definition'  # noqa
 
-                tiling_scheme = LinkType(href=tiling_scheme_url,
-                                         rel="http://www.opengis.net/def/rel/ogc/1.0/tiling-scheme", # noqa
-                                         type_=tiling_scheme_url_type,
-                                         title=tiling_scheme_url_title)
+                link = {
+                    'href': tiling_scheme_url,
+                    'rel': 'http://www.opengis.net/def/rel/ogc/1.0/tiling-scheme',  # noqa
+                    'type': tiling_scheme_url_type,
+                    'title': tiling_scheme_url_title
+                }
+
+                tiling_scheme = LinkType(**link)
 
         if tiling_scheme is None:
-            msg = f'Could not identify a valid tiling schema'  # noqa
+            msg = "Could not identify a valid tiling schema"
             LOGGER.error(msg)
             raise ProviderConnectionError(msg)
 
@@ -356,16 +362,22 @@ class MVTTippecanoeProvider(BaseMVTProvider):
 
         service_url_link_type = "application/vnd.mapbox-vector-tile"
         service_url_link_title = f'{tileset} vector tiles for {layer}'
-        service_url_link = LinkType(href=service_url, rel="item",
-                                    type_=service_url_link_type,
-                                    title=service_url_link_title)
+
+        link = {
+            'href': service_url,
+            'rel': 'item',
+            'title': service_url_link_title,
+            'type': service_url_link_type
+        }
+
+        service_url_link = LinkType(**link)
 
         links.append(tiling_scheme)
         links.append(service_url_link)
 
         content.links = links
 
-        return content.dict(exclude_none=True)
+        return content.model_dump(exclude_none=True, by_alias=True)
 
     def get_vendor_metadata(self, dataset, server_url, layer, tileset,
                             title, description, keywords, **kwargs):
@@ -374,7 +386,7 @@ class MVTTippecanoeProvider(BaseMVTProvider):
         """
 
         try:
-            metadata_json_content = self.get_metadata_from_URL(self.service_metadata_url) # noqa
+            metadata_json_content = self.get_metadata_from_URL(self.service_metadata_url)  # noqa
 
             service_url = url_join(
                 server_url,
@@ -383,8 +395,8 @@ class MVTTippecanoeProvider(BaseMVTProvider):
             content = MVTTilesJson(**metadata_json_content)
             content.tiles = service_url
             content.vector_layers = json.loads(
-                    metadata_json_content["json"])["vector_layers"]
-            return content.dict()
+                metadata_json_content["json"])["vector_layers"]
+            return content.model_dump()
         except ProviderConnectionError:
             msg = f'No tiles metadata json available: {self.service_metadata_url}'  # noqa
             LOGGER.error(msg)

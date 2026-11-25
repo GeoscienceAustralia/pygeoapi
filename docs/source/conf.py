@@ -2,7 +2,7 @@
 #
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2025 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 # Copyright (c) 2025 Angelos Tzotsos
 #
 # Permission is hereby granted, free of charge, to any person
@@ -93,7 +93,7 @@ templates_path = ['_templates']
 # You can specify multiple suffix as a list of string:
 #
 # source_suffix = ['.rst', '.md']
-source_suffix = '.rst'
+source_suffix = {'.rst': 'restructuredtext'}
 
 # The master toctree document.
 master_doc = 'index'
@@ -103,7 +103,7 @@ master_doc = 'index'
 project = 'pygeoapi'
 author = 'pygeoapi development team'
 license = 'This work is licensed under a Creative Commons Attribution 4.0 International License'  # noqa
-copyright = '2018-2025, ' + author + ' ' + license
+copyright = '2018-2026, ' + author + ' ' + license
 
 today_fmt = '%Y-%m-%d'
 
@@ -112,7 +112,7 @@ today_fmt = '%Y-%m-%d'
 # built documents.
 #
 # The short X.Y version.
-version = '0.20.0'
+version = '0.24.0'
 # The full version, including alpha/beta/rc tags.
 release = version
 

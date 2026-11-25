@@ -4,7 +4,7 @@
 #          Francesco Bartoli <xbartolone@gmail.com>
 #
 # Copyright (c) 2024 Tom Kralidis
-# Copyright (c) 2024 Francesco Bartoli
+# Copyright (c) 2025 Francesco Bartoli
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -40,11 +40,10 @@ from opensearch_dsl import Search
 
 from pygeofilter.backends.opensearch import to_filter
 
+from pygeoapi.crs import crs_transform
 from pygeoapi.provider.base import (BaseProvider, ProviderConnectionError,
                                     ProviderQueryError,
                                     ProviderItemNotFoundError)
-from pygeoapi.util import crs_transform
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -232,8 +231,8 @@ class OpenSearchProvider(BaseProvider):
                 }
                 query['query']['bool']['filter'].append(pf)
 
-            if '|' not in prop[1]:
-                pf['match'][prop_name]['minimum_should_match'] = '100%'
+                if '|' not in prop[1]:
+                    pf['match'][prop_name]['minimum_should_match'] = '100%'
 
         if sortby:
             LOGGER.debug('processing sortby')
@@ -374,7 +373,7 @@ class OpenSearchProvider(BaseProvider):
 
             LOGGER.debug(f'Query: {query}')
             try:
-                result = self.os_search(index=self.index_name, **query)
+                result = self.os_.search(index=self.index_name, body=query)
                 if len(result['hits']['hits']) == 0:
                     LOGGER.error(err)
                     raise ProviderItemNotFoundError(err)
@@ -426,7 +425,8 @@ class OpenSearchProvider(BaseProvider):
         identifier, json_data = self._load_and_prepare_item(
             item, identifier, raise_if_exists=False)
 
-        _ = self.os_index(index=self.index_name, id=identifier, body=json_data)
+        _ = self.os_.index(index=self.index_name, id=identifier,
+                           body=json_data)
 
         return True
 
@@ -440,7 +440,7 @@ class OpenSearchProvider(BaseProvider):
         """
 
         LOGGER.debug(f'Deleting item {identifier}')
-        _ = self.os_delete(index=self.index_name, id=identifier)
+        _ = self.os_.delete(index=self.index_name, id=identifier)
 
         return True
 

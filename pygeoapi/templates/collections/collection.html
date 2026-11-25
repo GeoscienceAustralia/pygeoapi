@@ -10,6 +10,8 @@
 {% block extrahead %}
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.3.1/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.3.1/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-imageoverlay-ogcapi@0.1.0/Leaflet.ImageOverlay.OGCAPI.js"></script>
+    <script src="{{ config['server']['url'] }}/static/js/default.js"></script>
 {% endblock %}
 
 {% block body %}
@@ -26,7 +28,7 @@
         </div>
       </div>
       <div class="row">
-        <div class="col-sm-12">
+        <div class="col-sm-12 mb-2">
           <div id="collection-map"></div>
         </div>
       </div>
@@ -72,19 +74,56 @@
               {% trans %}Display Schema of{% endtrans %} "{{ data['title'] }}"</a></div>
         </li>
       </ul>
+      {% endif %}
+
       {% for provider in config['resources'][data['id']]['providers'] %}
         {% if 'tile' in provider['type'] %}
-      <h3>{% trans %}Tiles{% endtrans %}</h3>
-      <ul>
-        <li>
-          <div>
-            <a title="{% trans %}Display Tiles{% endtrans %}" href="{{ data['collections_path'] }}/{{ data['id'] }}/tiles">{% trans %}Display Tiles of{% endtrans %} "{{ data['title'] }}"</a>
-          </div>
-        </li>
-      </ul>
+          <h3>{% trans %}Tiles{% endtrans %}</h3>
+          <ul>
+            <li>
+              <div>
+                <a title="{% trans %}Display Tiles{% endtrans %}" href="{{ data['collections_path'] }}/{{ data['id'] }}/tiles">{% trans %}Display Tiles of{% endtrans %} "{{ data['title'] }}"</a>
+              </div>
+            </li>
+          </ul> 
+        {% endif  %}
+
+        {% if 'coverage' in provider['type'] %}
+        <h3>{% trans %}Coverage{% endtrans %}</h3>
+        <ul>
+          <li>
+            <div>
+              <a title="{% trans %}Display Coverage{% endtrans %}" href="{{ data['collections_path'] }}/{{ data['id'] }}/coverage">
+                {% trans %}Display Coverage of{% endtrans %} "{{ data['title'] }}"</a></div>
+          </li>
+        </ul>
+        <h3>{% trans %}Schema{% endtrans %}</h3>
+        <ul>
+          <li>
+            <div>
+              <a title="{% trans %}Display Schema{% endtrans %}" href="{{ data['collections_path'] }}/{{ data['id'] }}/schema">
+                {% trans %}Display Schema of{% endtrans %} "{{ data['title'] }}"</a></div>
+          </li>
+        </ul>
         {% endif %}
+
       {% endfor %}
-      {% endif  %}
+      {%- if data['data_queries'] -%}
+        <h3>Data Queries</h3>
+        <table class="table table-striped table-bordered">
+        <tr>
+            <th>Query Name</th>
+            <th>Query Location</th>
+        </tr>
+        {% for query_name, query in data['data_queries'].items() %}
+        <tr>
+            <td>{{ query_name }}</td>
+            <td><a title="{{ query_name }}" href="{{ query['link']['href'] }}">{{ query['link']['href'] }}</a></td>
+        </tr>
+        {% endfor %}
+        <caption><em>Note: EDR Queries may require query parameters not provided in the Query Location.</em></caption>
+        </table>
+      {%- endif -%}
 
       {% if 'parameter_names' in data %}
       <h3>Parameters</h3>
@@ -97,7 +136,7 @@
         {% for parameter in data['parameter_names'].values() %}
         <tr>
           <td>{{ parameter['id'] }}</td>
-          <td>{{ parameter['name'] }}</td>
+          <td>{{ parameter['observedProperty']['label'].values()|first }}{% if parameter['observedProperty']['description'] %}<br/><i>{{ parameter['observedProperty']['description'].values()|first }}</i>{% endif %}</td>
           <td>{{ parameter['unit']['symbol']['value'] }}</td>
         </tr>
         {% endfor %}
@@ -126,10 +165,10 @@
       <h3>{% trans %}Storage CRS{% endtrans %}</h3>
       <ul>
           <li>
-            {% trans %}CRS{% endtrans %}: <a title="{{ data['storageCRS'] }}" href="{{ data['storageCRS'] }}"><span>{{ data['storageCRS'] }}</span></a>
+            {% trans %}CRS{% endtrans %}: <a title="{{ data['storageCrs'] }}" href="{{ data['storageCrs'] }}"><span>{{ data['storageCrs'] }}</span></a>
           </li>
         <li>
-          {% trans %}Epoch{% endtrans %}: <span>{{ data['storageCrsCoordinateEpoch'] or '_(not specified)' }}</span></a>
+          {% trans %}Epoch{% endtrans %}: <a><span>{{ data['storageCrsCoordinateEpoch'] or '_(not specified)' }}</span></a>
         </li>
       </ul> 
       {% endif %}#}
@@ -140,6 +179,7 @@
 {% block extrafoot %}
     <script>
     var map = L.map('collection-map').setView([{{ 0 }}, {{ 0 }}], 1);
+
     map.addLayer(new L.TileLayer(
       '{{ config['server']['map']['url'] }}', {
         maxZoom: 18,
@@ -147,23 +187,85 @@
       }
     ));
 
-   {# if this collection has a map representation, add it to the map #}
-   {% for link in data['links'] %}
-      {% if link['rel'] == 'http://www.opengis.net/def/rel/ogc/1.0/map' and link['href'] %} 
-        L.tileLayer.wms("{{ link['href'] }}", {"opacity": .7, "transparent": true, "crs": L.CRS.EPSG4326}).addTo(map); 
+    var bbox = gen_safe_bbox({{ data['extent']['spatial']['bbox'][0] }});
+
+    var bbox_layer = L.polygon([
+      [bbox[1], bbox[0]],
+      [bbox[3], bbox[0]],
+      [bbox[3], bbox[2]],
+      [bbox[1], bbox[2]]
+    ]);
+
+    var lbounds = bbox_layer.getBounds();
+
+    // Make sure that we pass valid coordinates to the imageOverlay
+    function clampLat(lat) {
+        return Math.max(-85.0511, Math.min(lat, 85.0511));
+    }
+
+    var sw = lbounds.getSouthWest();
+    var ne = lbounds.getNorthEast();
+    var clampedSw = L.latLng(clampLat(sw.lat), sw.lng);
+    var clampedNe = L.latLng(clampLat(ne.lat), ne.lng);
+    var clampedBounds = L.latLngBounds(clampedSw, clampedNe);
+
+    var ogcapi_layer = null;
+    var image_overlay = null;
+
+    {# if this collection has a map representation, add it to the map #}
+    {% for link in data['links'] %}
+      {% if link['rel'] == 'http://www.opengis.net/def/rel/ogc/1.0/map' and link['href'] %}
+        ogcapi_layer = L.imageOverlay.ogcapi("{{ data['base_url'] }}", {
+            collection: "{{ data['id'] }}",
+            "opacity": .7, 
+            "transparent": true, 
+            "bounds": clampedBounds 
+        });
+        image_layer = L.imageOverlay("{{ link['href'] }}", clampedBounds, {opacity: 0.7, transparent: true});
+         bbox_layer.setStyle({
+             fillOpacity: 0
+         });
+        bbox_layer.setStyle({
+            fillOpacity: 0
+        });
       {% endif %}
     {% endfor %}
 
+    // Check bounds and toggle the visibility of the imageOverlay, accordingly
+    function toggleOverlayVisibility() {
 
-    var bbox_layer = L.polygon([
-      ['{{ data['extent']['spatial']['bbox'][0][1] }}', '{{ data['extent']['spatial']['bbox'][0][0] }}'],
-      ['{{ data['extent']['spatial']['bbox'][0][3] }}', '{{ data['extent']['spatial']['bbox'][0][0] }}'],
-      ['{{ data['extent']['spatial']['bbox'][0][3] }}', '{{ data['extent']['spatial']['bbox'][0][2] }}'],
-      ['{{ data['extent']['spatial']['bbox'][0][1] }}', '{{ data['extent']['spatial']['bbox'][0][2] }}']
-    ]);
+      if (ogcapi_layer) {
+        var currentBounds = map.getBounds();
+        var west = currentBounds.getWest();
+        var east = currentBounds.getEast();
+        var centerLng = map.getCenter().lng;
+        
+        var viewWidth = east - west;
+
+        var isWithinBounds = (viewWidth <= 360) && (centerLng >= -180 && centerLng <= 180);
+
+         if (isWithinBounds) {
+            if (!map.hasLayer(ogcapi_layer)) {
+              map.addLayer(ogcapi_layer);
+            }
+            map.removeLayer(image_layer);
+         } else {
+            if (map.hasLayer(ogcapi_layer)) {
+              map.removeLayer(ogcapi_layer); 
+            }
+            map.addLayer(image_layer);
+         }
+     }
+    }
+
+    map.on('moveend', toggleOverlayVisibility);
 
     map.addLayer(bbox_layer);
-    map.fitBounds(bbox_layer.getBounds(), {maxZoom: 10});
+    
+    map.fitBounds(clampedBounds, {maxZoom: 10});
+
+    // Run the initial visibility check
+    toggleOverlayVisibility();
 
     // Allow to get bbox query parameter of a rectangular area specified by
     // dragging the mouse while pressing the Ctrl key

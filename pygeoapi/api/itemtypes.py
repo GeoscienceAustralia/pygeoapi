@@ -7,8 +7,8 @@
 #          Colin Blackburn <colb@bgs.ac.uk>
 #          Ricardo Garcia Silva <ricardo.garcia.silva@geobeyond.it>
 #
-# Copyright (c) 2024 Tom Kralidis
-# Copyright (c) 2022 Francesco Bartoli
+# Copyright (c) 2026 Tom Kralidis
+# Copyright (c) 2025 Francesco Bartoli
 # Copyright (c) 2022 John A Stevenson and Colin Blackburn
 # Copyright (c) 2023 Ricardo Garcia Silva
 #
@@ -35,48 +35,44 @@
 #
 # =================================================================
 
-
+from collections import ChainMap
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, UTC
 from http import HTTPStatus
 import logging
-from typing import Any, Tuple, Union, Optional
+from typing import Any, Tuple, Union
 import urllib.parse
 
-from pygeofilter.parsers.ecql import parse as parse_ecql_text
+from pygeofilter.parsers.cql2_text import parse as parse_cql2_text
 from pygeofilter.parsers.cql2_json import parse as parse_cql2_json
 from pyproj.exceptions import CRSError
 
 from pygeoapi import l10n
 from pygeoapi.api import evaluate_limit
+from pygeoapi.api.pubsub import publish_message
+from pygeoapi.crs import (DEFAULT_CRS, DEFAULT_STORAGE_CRS,
+                          create_crs_transform_spec, get_supported_crs_list,
+                          modify_pygeofilter, transform_bbox,
+                          set_content_crs_header)
+from pygeoapi.formats import F_JSON, FORMAT_TYPES, F_HTML, F_JSONLD
 from pygeoapi.formatter.base import FormatterSerializationError
 from pygeoapi.linked_data import geojson2jsonld
+from pygeoapi.openapi import get_oas_30_parameters
 from pygeoapi.plugin import load_plugin, PLUGINS
+from pygeoapi.provider import filter_providers_by_type, get_provider_by_type
 from pygeoapi.provider.base import (
-    ProviderGenericError, ProviderTypeError, SchemaType)
+    ProviderGenericError, ProviderItemNotFoundError,
+    ProviderTypeError, SchemaType)
 
-from pygeoapi.util import (CrsTransformSpec, filter_providers_by_type,
-                           filter_dict_by_key_value, get_crs_from_uri,
-                           get_provider_by_type, get_supported_crs_list,
-                           modify_pygeofilter, render_j2_template, str2bool,
-                           to_json, transform_bbox)
+from pygeoapi.util import (to_json, filter_dict_by_key_value, str2bool,
+                           render_j2_template, get_dataset_formatters)
 
-from . import (
-    APIRequest, API, SYSTEM_LOCALE, F_JSON, FORMAT_TYPES, F_HTML, F_JSONLD,
-    validate_bbox, validate_datetime
-)
+from . import APIRequest, API, SYSTEM_LOCALE, validate_bbox, validate_datetime
 
 LOGGER = logging.getLogger(__name__)
 
 OGC_RELTYPES_BASE = 'http://www.opengis.net/def/rel/ogc/1.0'
 
-DEFAULT_CRS_LIST = [
-    'http://www.opengis.net/def/crs/OGC/1.3/CRS84',
-    'http://www.opengis.net/def/crs/OGC/1.3/CRS84h',
-]
-
-DEFAULT_CRS = 'http://www.opengis.net/def/crs/OGC/1.3/CRS84'
-DEFAULT_STORAGE_CRS = DEFAULT_CRS
 
 CONFORMANCE_CLASSES_FEATURES = [
     'http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/core',
@@ -87,8 +83,11 @@ CONFORMANCE_CLASSES_FEATURES = [
     'http://www.opengis.net/spec/ogcapi-features-3/1.0/conf/queryables',
     'http://www.opengis.net/spec/ogcapi-features-3/1.0/conf/queryables-query-parameters',  # noqa
     'http://www.opengis.net/spec/ogcapi-features-4/1.0/conf/create-replace-delete',  # noqa
-    'http://www.opengis.net/spec/ogcapi-features-5/1.0/conf/schemas',
-    'http://www.opengis.net/spec/ogcapi-features-5/1.0/conf/core-roles-features'  # noqa
+    'http://www.opengis.net/spec/ogcapi-common-3/1.0/conf/schemas',
+    'http://www.opengis.net/spec/ogcapi-common-3/1.0/conf/advanced-property-roles',  # noqa
+    'http://www.opengis.net/spec/cql2/1.0/conf/cql2-text',
+    'http://www.opengis.net/spec/cql2/1.0/conf/basic-cql2'
+
 ]
 
 CONFORMANCE_CLASSES_RECORDS = [
@@ -101,7 +100,8 @@ CONFORMANCE_CLASSES_RECORDS = [
 
 
 def get_collection_queryables(api: API, request: Union[APIRequest, Any],
-                              dataset=None) -> Tuple[dict, int, str]:
+                              dataset: str | None = None
+                              ) -> Tuple[dict, int, str]:
     """
     Provide collection queryables
 
@@ -111,6 +111,7 @@ def get_collection_queryables(api: API, request: Union[APIRequest, Any],
     :returns: tuple of headers, status code, content
     """
 
+    domains = {}
     headers = request.get_response_headers(**api.api_headers)
 
     if any([dataset is None,
@@ -135,8 +136,31 @@ def get_collection_queryables(api: API, request: Union[APIRequest, Any],
     if p is None:
         msg = 'queryables not available for this collection'
         return api.get_exception(
+
             HTTPStatus.BAD_REQUEST, headers, request.format,
             'NoApplicableError', msg)
+
+    LOGGER.debug('Processing profile')
+    profile = request.params.get('profile', '')
+
+    LOGGER.debug('Processing properties')
+    val = request.params.get('properties')
+    if val is not None:
+        properties = [x for x in val.split(',') if x]
+        properties_to_check = set(p.properties) | set(p.fields.keys())
+
+        if len(list(set(properties) - set(properties_to_check))) > 0:
+            msg = 'unknown properties specified'
+            return api.get_exception(
+                HTTPStatus.BAD_REQUEST, headers, request.format,
+                'InvalidParameterValue', msg)
+    else:
+        properties = []
+
+    queryables_id = f'{api.get_collections_url()}/{dataset}/queryables'
+
+    if request.params:
+        queryables_id += '?' + urllib.parse.urlencode(request.params)
 
     queryables = {
         'type': 'object',
@@ -144,7 +168,7 @@ def get_collection_queryables(api: API, request: Union[APIRequest, Any],
             api.config['resources'][dataset]['title'], request.locale),
         'properties': {},
         '$schema': 'http://json-schema.org/draft/2019-09/schema',
-        '$id': f'{api.get_collections_url()}/{dataset}/queryables'
+        '$id': queryables_id
     }
 
     if p.fields:
@@ -156,8 +180,17 @@ def get_collection_queryables(api: API, request: Union[APIRequest, Any],
             '$ref': 'https://geojson.org/schema/Geometry.json'
         }
 
+    if profile == 'actual-domain':
+        try:
+            domains, _ = p.get_domains(properties)
+        except NotImplementedError:
+            LOGGER.debug('Domains are not suported by this provider')
+            domains = {}
+
     for k, v in p.fields.items():
         show_field = False
+        if properties and k not in properties:
+            continue
         if p.properties:
             if k in p.properties:
                 show_field = True
@@ -169,6 +202,8 @@ def get_collection_queryables(api: API, request: Union[APIRequest, Any],
                 'title': k,
                 'type': v['type']
             }
+            if v['type'] == 'float':
+                queryables['properties'][k]['type'] = 'number'
             if v.get('format') is not None:
                 queryables['properties'][k]['format'] = v['format']
             if 'values' in v:
@@ -178,6 +213,8 @@ def get_collection_queryables(api: API, request: Union[APIRequest, Any],
                 queryables['properties'][k]['x-ogc-role'] = 'id'
             if k == p.time_field:
                 queryables['properties'][k]['x-ogc-role'] = 'primary-instant'  # noqa
+            if domains.get(k):
+                queryables['properties'][k]['enum'] = domains[k]
 
     if request.format == F_HTML:  # render
         tpl_config = api.get_dataset_templates(dataset)
@@ -201,7 +238,7 @@ def get_collection_queryables(api: API, request: Union[APIRequest, Any],
 
 def get_collection_items(
         api: API, request: Union[APIRequest, Any],
-        dataset) -> Tuple[dict, int, str]:
+        dataset: str | None = None) -> Tuple[dict, int, str]:
     """
     Queries collection
 
@@ -210,9 +247,6 @@ def get_collection_items(
 
     :returns: tuple of headers, status code, content
     """
-
-    if not request.is_valid(PLUGINS['formatter'].keys()):
-        return api.get_format_exception(request)
 
     # Set Content-Language to system locale until provider locale
     # has been determined
@@ -322,6 +356,20 @@ def get_collection_items(
             err.http_status_code, headers, request.format,
             err.ogc_exception_code, err.message)
 
+    LOGGER.debug('Validating requested format')
+    dataset_formatters = get_dataset_formatters(collections[dataset])
+
+    if dataset_formatters:
+        LOGGER.debug(f'Dataset formatters: {dataset_formatters}')
+        request._format = request._get_format(
+            request.get_request_headers(request.headers),
+            {v.f: v.mimetype for v in dataset_formatters.values()})
+
+        LOGGER.debug(f'Request format: {request.format}')
+
+    if not request.is_valid(dataset_formatters.keys()):
+        return api.get_format_exception(request)
+
     crs_transform_spec = None
     if provider_type == 'feature':
         # crs query parameter is only available for OGC API - Features
@@ -330,7 +378,7 @@ def get_collection_items(
         query_crs_uri = request.params.get('crs')
         try:
             crs_transform_spec = create_crs_transform_spec(
-                provider_def, query_crs_uri,
+                provider_def, query_crs_uri
             )
         except (ValueError, CRSError) as err:
             msg = str(err)
@@ -355,7 +403,7 @@ def get_collection_items(
                 HTTPStatus.BAD_REQUEST, headers, request.format,
                 'NoApplicableCode', msg)
 
-        supported_crs_list = get_supported_crs_list(provider_def, DEFAULT_CRS_LIST) # noqa
+        supported_crs_list = get_supported_crs_list(provider_def)
         if bbox_crs not in supported_crs_list:
             msg = f'bbox-crs {bbox_crs} not supported for this collection'
             return api.get_exception(
@@ -363,14 +411,14 @@ def get_collection_items(
                 'NoApplicableCode', msg)
     elif len(bbox) > 0:
         # bbox but no bbox-crs param: assume bbox is in default CRS
-        bbox_crs = DEFAULT_CRS
+        bbox_crs = DEFAULT_STORAGE_CRS
 
-    # Transform bbox to storageCRS
-    # when bbox-crs different from storageCRS.
+    # Transform bbox to storage_crs
+    # when bbox-crs different from storage_crs.
     if len(bbox) > 0:
         try:
             # Get a pyproj CRS instance for the Collection's Storage CRS
-            storage_crs = provider_def.get('storage_crs', DEFAULT_STORAGE_CRS) # noqa
+            storage_crs = provider_def.get('storage_crs', DEFAULT_STORAGE_CRS)
 
             # Do the (optional) Transform to the Storage CRS
             bbox = transform_bbox(bbox, bbox_crs, storage_crs)
@@ -381,13 +429,16 @@ def get_collection_items(
 
     LOGGER.debug('processing property parameters')
     for k, v in request.params.items():
+        include_query_param = False
         if k not in reserved_fieldnames:
-            if k in list(p.fields.keys()):
-                LOGGER.debug(f'Adding property filter {k}={v}')
-            else:
-                LOGGER.debug(f'Adding additional property filter {k}={v}')
+            if k in list(p.fields.keys()) or p.include_extra_query_parameters:
+                include_query_param = True
 
+        if include_query_param:
+            LOGGER.debug(f'Including query parameter {k}={v}')
             properties.append((k, v))
+        else:
+            LOGGER.debug(f'Discarding query parameter {k}={v}')
 
     LOGGER.debug('processing sort parameter')
     val = request.params.get('sortby')
@@ -398,12 +449,12 @@ def get_collection_items(
         for s in sorts:
             prop = s
             order = '+'
-            if s[0] in ['+', '-']:
+            if s and s[0] in ['+', '-']:
                 order = s[0]
                 prop = s[1:]
 
             if prop not in p.fields.keys():
-                msg = 'bad sort property'
+                msg = 'bad sortby property'
                 return api.get_exception(
                     HTTPStatus.BAD_REQUEST, headers, request.format,
                     'InvalidParameterValue', msg)
@@ -443,7 +494,7 @@ def get_collection_items(
 
     if cql_text is not None:
         try:
-            filter_ = parse_ecql_text(cql_text)
+            filter_ = parse_cql2_text(cql_text)
             filter_ = modify_pygeofilter(
                 filter_,
                 filter_crs_uri=filter_crs_uri,
@@ -477,8 +528,8 @@ def get_collection_items(
 
     LOGGER.debug('Processing filter-lang parameter')
     filter_lang = request.params.get('filter-lang')
-    # Currently only cql-text is handled, but it is optional
-    if filter_lang not in [None, 'cql-json', 'cql-text']:
+    filter_langs = [None, 'cql-json', 'cql-text', 'cql2-text', 'cql2-json']
+    if filter_lang not in filter_langs:
         msg = 'Invalid filter language'
         return api.get_exception(
             HTTPStatus.BAD_REQUEST, headers, request.format,
@@ -548,26 +599,47 @@ def get_collection_items(
         'href': f'{uri}?f={F_HTML}{serialized_query_params}'
     }])
 
-    if offset > 0:
+    for key, value in dataset_formatters.items():
+        content['links'].append({
+            'type': value.mimetype,
+            'rel': 'alternate',
+            'title': f'This document as {key}',
+            'href': f'{uri}?f={value.name}{serialized_query_params}'
+        })
+
+    next_link = False
+    prev_link = False
+
+    if 'next' in [link['rel'] for link in content['links']]:
+        LOGGER.debug('Using next link from provider')
+    else:
+        if content.get('numberMatched', -1) > (limit + offset):
+            next_link = True
+        elif len(content['features']) == limit:
+            next_link = True
+
+        if offset > 0:
+            prev_link = True
+
+    if prev_link:
         prev = max(0, offset - limit)
+        url = f'{uri}?offset={prev}{serialized_query_params}'
+        if request.format is not None:
+            url = f'{uri}?f={request.format}&offset={prev}{serialized_query_params}'  # noqa
+
         content['links'].append(
             {
                 'type': 'application/geo+json',
                 'rel': 'prev',
                 'title': l10n.translate('Items (prev)', request.locale),
-                'href': f'{uri}?offset={prev}{serialized_query_params}'
+                'href': url
             })
-
-    next_link = False
-
-    if content.get('numberMatched', -1) > (limit + offset):
-        next_link = True
-    elif len(content['features']) == limit:
-        next_link = True
 
     if next_link:
         next_ = offset + limit
         next_href = f'{uri}?offset={next_}{serialized_query_params}'
+        if request.format is not None:
+            next_href = f'{uri}?f={request.format}&offset={next_}{serialized_query_params}'  # noqa
         content['links'].append(
             {
                 'type': 'application/geo+json',
@@ -585,7 +657,7 @@ def get_collection_items(
             'href': '/'.join(uri.split('/')[:-1])
         })
 
-    content['timeStamp'] = datetime.utcnow().strftime(
+    content['timeStamp'] = datetime.now(UTC).strftime(
         '%Y-%m-%dT%H:%M:%S.%fZ')
 
     # Set response language to requested provider locale
@@ -597,6 +669,7 @@ def get_collection_items(
         tpl_config = api.get_dataset_templates(dataset)
         # For constructing proper URIs to items
 
+        content['itemtype'] = p.type
         content['items_path'] = uri
         content['dataset_path'] = '/'.join(uri.split('/')[:-1])
         content['collections_path'] = api.get_collections_url()
@@ -615,17 +688,18 @@ def get_collection_items(
                                      'collections/items/index.html',
                                      content, request.locale)
         return headers, HTTPStatus.OK, content
-    elif request.format == 'csv':  # render
-        formatter = load_plugin('formatter',
-                                {'name': 'CSV', 'geom': True})
+    elif request.format in [df.f for df in dataset_formatters.values()]:
+        formatter = [v for v in dataset_formatters.values() if
+                     v.f == request.format][0]
 
         try:
             content = formatter.write(
                 data=content,
                 options={
+                    'content_crs': query_crs_uri,
                     'provider_def': get_provider_by_type(
-                                        collections[dataset]['providers'],
-                                        'feature')
+                        collections[dataset]['providers'],
+                        'feature')
                 }
             )
         except FormatterSerializationError:
@@ -636,13 +710,14 @@ def get_collection_items(
 
         headers['Content-Type'] = formatter.mimetype
 
-        if p.filename is None:
-            filename = f'{dataset}.csv'
-        else:
-            filename = f'{p.filename}'
+        if formatter.attachment:
+            if p.filename is None:
+                filename = f'{dataset}.{formatter.extension}'
+            else:
+                filename = f'{p.filename}'
 
-        cd = f'attachment; filename="{filename}"'
-        headers['Content-Disposition'] = cd
+            cd = f'attachment; filename="{filename}"'
+            headers['Content-Disposition'] = cd
 
         return headers, HTTPStatus.OK, content
 
@@ -658,7 +733,8 @@ def get_collection_items(
 
 def manage_collection_item(
         api: API, request: APIRequest,
-        action, dataset, identifier=None) -> Tuple[dict, int, str]:
+        action: str, dataset: str,
+        identifier: str | None = None) -> Tuple[dict, int, str]:
     """
     Adds an item to a collection
 
@@ -678,6 +754,9 @@ def manage_collection_item(
 
     collections = filter_dict_by_key_value(api.config['resources'],
                                            'type', 'collection')
+
+    http_status = HTTPStatus.OK
+    payload = None
 
     if dataset not in collections.keys():
         msg = 'Collection not found'
@@ -724,7 +803,8 @@ def manage_collection_item(
     if action == 'create':
         LOGGER.debug('Creating item')
         try:
-            identifier = p.create(request.data)
+            payload = request.data
+            identifier = p.create(payload)
         except TypeError as err:
             msg = str(err)
             return api.get_exception(
@@ -737,12 +817,13 @@ def manage_collection_item(
 
         headers['Location'] = f'{api.get_collections_url()}/{dataset}/items/{identifier}'  # noqa
 
-        return headers, HTTPStatus.CREATED, ''
+        http_status = HTTPStatus.CREATED
 
     if action == 'update':
         LOGGER.debug('Updating item')
         try:
-            _ = p.update(identifier, request.data)
+            payload = request.data
+            _ = p.update(identifier, payload)
         except TypeError as err:
             msg = str(err)
             return api.get_exception(
@@ -753,10 +834,17 @@ def manage_collection_item(
                 err.http_status_code, headers, request.format,
                 err.ogc_exception_code, err.message)
 
-        return headers, HTTPStatus.NO_CONTENT, ''
+        http_status = HTTPStatus.NO_CONTENT
 
     if action == 'delete':
         LOGGER.debug('Deleting item')
+        try:
+            _ = p.get(identifier)
+        except ProviderItemNotFoundError as err:
+            return api.get_exception(
+                err.http_status_code, headers, request.format,
+                err.ogc_exception_code, err.message)
+
         try:
             _ = p.delete(identifier)
         except ProviderGenericError as err:
@@ -764,11 +852,19 @@ def manage_collection_item(
                 err.http_status_code, headers, request.format,
                 err.ogc_exception_code, err.message)
 
-        return headers, HTTPStatus.OK, ''
+        http_status = HTTPStatus.OK
+
+    if api.pubsub_client is not None:
+        LOGGER.debug('Publishing message')
+        publish_message(api.pubsub_client, api.base_url, action, dataset,
+                        identifier, payload)
+
+    return headers, http_status, ''
 
 
 def get_collection_item(api: API, request: APIRequest,
-                        dataset, identifier) -> Tuple[dict, int, str]:
+                        dataset: str, identifier: str
+                        ) -> Tuple[dict, int, str]:
     """
     Get a single collection item
 
@@ -824,7 +920,7 @@ def get_collection_item(api: API, request: APIRequest,
         query_crs_uri = request.params.get('crs')
         try:
             crs_transform_spec = create_crs_transform_spec(
-                provider_def, query_crs_uri,
+                provider_def, query_crs_uri
             )
         except (ValueError, CRSError) as err:
             msg = str(err)
@@ -945,99 +1041,6 @@ def get_collection_item(api: API, request: APIRequest,
     return headers, HTTPStatus.OK, to_json(content, api.pretty_print)
 
 
-def create_crs_transform_spec(
-        config: dict, query_crs_uri: Optional[str] = None) -> Union[None, CrsTransformSpec]:  # noqa
-    """
-    Create a `CrsTransformSpec` instance based on provider config and
-    *crs* query parameter.
-
-    :param config: Provider config dictionary.
-    :type config: dict
-    :param query_crs_uri: Uniform resource identifier of the coordinate
-        reference system (CRS) specified in query parameter (if specified).
-    :type query_crs_uri: str, optional
-
-    :raises ValueError: Error raised if the CRS specified in the query
-        parameter is not in the list of supported CRSs of the provider.
-    :raises `CRSError`: Error raised if no CRS could be identified from the
-        query *crs* parameter (URI).
-
-    :returns: `CrsTransformSpec` instance if the CRS specified in query
-        parameter differs from the storage CRS, else `None`.
-    :rtype: Union[None, CrsTransformSpec]
-    """
-
-    # Get storage/default CRS for Collection.
-    storage_crs_uri = config.get('storage_crs', DEFAULT_STORAGE_CRS)
-
-    if not query_crs_uri:
-        if storage_crs_uri in DEFAULT_CRS_LIST:
-            # Could be that storageCRS is
-            # http://www.opengis.net/def/crs/OGC/1.3/CRS84h
-            query_crs_uri = storage_crs_uri
-        else:
-            query_crs_uri = DEFAULT_CRS
-        LOGGER.debug(f'no crs parameter, using default: {query_crs_uri}')
-
-    supported_crs_list = get_supported_crs_list(config, DEFAULT_CRS_LIST)
-    # Check that the crs specified by the query parameter is supported.
-    if query_crs_uri not in supported_crs_list:
-        raise ValueError(
-            f'CRS {query_crs_uri!r} not supported for this '
-            'collection. List of supported CRSs: '
-            f'{", ".join(supported_crs_list)}.'
-        )
-    crs_out = get_crs_from_uri(query_crs_uri)
-
-    storage_crs = get_crs_from_uri(storage_crs_uri)
-    # Check if the crs specified in query parameter differs from the
-    # storage crs.
-    if str(storage_crs) != str(crs_out):
-        LOGGER.debug(
-            f'CRS transformation: {storage_crs} -> {crs_out}'
-        )
-        return CrsTransformSpec(
-            source_crs_uri=storage_crs_uri,
-            source_crs_wkt=storage_crs.to_wkt(),
-            target_crs_uri=query_crs_uri,
-            target_crs_wkt=crs_out.to_wkt(),
-        )
-    else:
-        LOGGER.debug('No CRS transformation')
-        return None
-
-
-def set_content_crs_header(
-        headers: dict, config: dict, query_crs_uri: Optional[str] = None):
-    """
-    Set the *Content-Crs* header in responses from providers of Feature type.
-
-    :param headers: Response headers dictionary.
-    :type headers: dict
-    :param config: Provider config dictionary.
-    :type config: dict
-    :param query_crs_uri: Uniform resource identifier of the coordinate
-        reference system specified in query parameter (if specified).
-    :type query_crs_uri: str, optional
-
-    :returns: None
-    """
-
-    if query_crs_uri:
-        content_crs_uri = query_crs_uri
-    else:
-        # If empty use default CRS
-        storage_crs_uri = config.get('storage_crs', DEFAULT_STORAGE_CRS)
-        if storage_crs_uri in DEFAULT_CRS_LIST:
-            # Could be that storageCRS is one of the defaults like
-            # http://www.opengis.net/def/crs/OGC/1.3/CRS84h
-            content_crs_uri = storage_crs_uri
-        else:
-            content_crs_uri = DEFAULT_CRS
-
-    headers['Content-Crs'] = f'<{content_crs_uri}>'
-
-
 def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, dict]]:  # noqa
     """
     Get OpenAPI fragments
@@ -1050,18 +1053,31 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
 
     from pygeoapi.openapi import OPENAPI_YAML, get_visible_collections
 
-    properties = {
-        'name': 'properties',
+    limit = {
+        'name': 'limit',
         'in': 'query',
-        'description': 'The properties that should be included for each feature. The parameter value is a comma-separated list of property names.',  # noqa
+        'description': 'The optional limit parameter limits the number of items that are presented in the response document',  # noqa
+        'required': False,
+        'schema': {
+            'type': 'integer',
+            'minimum': 1,
+            'maximum': 10000,
+            'default': 100
+        },
+        'style': 'form',
+        'explode': False
+    }
+
+    profile = {
+        'name': 'profile',
+        'in': 'query',
+        'description': 'The profile to be applied to a given request',
         'required': False,
         'style': 'form',
         'explode': False,
         'schema': {
-            'type': 'array',
-            'items': {
-                'type': 'string'
-            }
+            'type': 'string',
+            'enum': ['actual-domain', 'valid-domain']
         }
     }
 
@@ -1091,9 +1107,20 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
             title = l10n.translate(v['title'], locale)
             description = l10n.translate(v['description'], locale)
 
-            coll_properties = deepcopy(properties)
+            oas_30_parameters = get_oas_30_parameters(cfg, locale)
 
+            coll_properties = deepcopy(oas_30_parameters)['properties']
             coll_properties['schema']['items']['enum'] = list(p.fields.keys())
+
+            coll_limit = _derive_limit(
+                deepcopy(limit), cfg['server'].get('limits', {}),
+                v.get('limits', {})
+            )
+
+            dataset_formatters = get_dataset_formatters(v)
+            coll_f_parameter = deepcopy(oas_30_parameters)['f']
+            for key, value in dataset_formatters.items():
+                coll_f_parameter['schema']['enum'].append(value.f)
 
             paths[items_path] = {
                 'get': {
@@ -1102,10 +1129,10 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
                     'tags': [k],
                     'operationId': f'get{k.capitalize()}Features',
                     'parameters': [
-                        {'$ref': '#/components/parameters/f'},
+                        coll_f_parameter,
                         {'$ref': '#/components/parameters/lang'},
                         {'$ref': '#/components/parameters/bbox'},
-                        {'$ref': f"{OPENAPI_YAML['oapif-1']}#/components/parameters/limit"},  # noqa
+                        coll_limit,
                         {'$ref': '#/components/parameters/crs'},  # noqa
                         {'$ref': '#/components/parameters/bbox-crs'},
                         coll_properties,
@@ -1132,28 +1159,48 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
                 }
             }
 
+            # TODO: update feature POSTs once updated in OGC API - Features
+            # https://github.com/opengeospatial/ogcapi-features/issues/771
+            paths[items_path]['post'] = {
+                'summary': f'Get {title} items with CQL2',
+                'description': description,
+                'tags': [k],
+                'operationId': f'getCQL2{k.capitalize()}Features',
+                'requestBody': {
+                    'description': 'Get items with CQL2',
+                    'content': {
+                        'application/json': {  # CQL2
+                            'schema': {
+                                '$ref': OPENAPI_YAML['cql2']
+                            }
+                        }
+                    },
+                    'required': True
+                },
+                'responses': {
+                    '200': {'$ref': f"{OPENAPI_YAML['oapif-1']}#/components/responses/Features"},  # noqa
+                    '400': {'$ref': f"{OPENAPI_YAML['oapif-1']}#/components/responses/InvalidParameter"},  # noqa
+                    '500': {'$ref': f"{OPENAPI_YAML['oapif-1']}#/components/responses/ServerError"}  # noqa
+                }
+            }
+
             if p.editable:
                 LOGGER.debug('Provider is editable; adding post')
 
-                paths[items_path]['post'] = {
-                    'summary': f'Add {title} items',
-                    'description': description,
-                    'tags': [k],
-                    'operationId': f'add{k.capitalize()}Features',
-                    'requestBody': {
-                        'description': 'Adds item to collection',
-                        'content': {
-                            'application/geo+json': {
-                                'schema': {}
-                            }
-                        },
-                        'required': True
-                    },
-                    'responses': {
-                        '201': {'description': 'Successful creation'},
-                        '400': {'$ref': f"{OPENAPI_YAML['oapif-1']}#/components/responses/InvalidParameter"},  # noqa
-                        '500': {'$ref': f"{OPENAPI_YAML['oapif-1']}#/components/responses/ServerError"}  # noqa
-                    }
+                paths[items_path]['post']['operationId'] = f'getCQL2OrAdd{k.capitalize()}Features'  # noqa
+
+                val = paths[items_path]['post']['summary']
+                paths[items_path]['post']['summary'] = f'{val} or add item (see media type)'  # noqa
+
+                val = paths[items_path]['post']['requestBody']['description']
+                paths[items_path]['post']['requestBody']['description'] = f'{val} or add item to collection'  # noqa
+
+                paths[items_path]['post']['requestBody']['content']['application/geo+json'] = {  # noqa
+                    'schema': {}
+                }
+
+                paths[items_path]['post']['responses']['201'] = {
+                    'description': 'Successful creation'
                 }
 
                 try:
@@ -1198,7 +1245,9 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
                         'tags': [k],
                         'operationId': f'get{k.capitalize()}Queryables',
                         'parameters': [
+                            coll_properties,
                             {'$ref': '#/components/parameters/f'},
+                            profile,
                             {'$ref': '#/components/parameters/lang'}
                         ],
                         'responses': {
@@ -1354,3 +1403,28 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
             LOGGER.debug('collection is not feature/item based')
 
     return [{'name': 'records'}, {'name': 'features'}], {'paths': paths}
+
+
+def _derive_limit(limit_object, server_limits, collection_limits) -> dict:
+    """
+    Helper function to derive a limit object for a given collection
+
+    :param limit_object: OpenAPI limit parameter
+    :param server_limits: server level limits configuration
+    :param collection_limits: collection level limits configuration
+
+    :returns: updated limit object
+    """
+
+    effective_limits = ChainMap(collection_limits, server_limits)
+
+    default_limit = effective_limits.get('default_items', 10)
+    max_limit = effective_limits.get('max_items', 10)
+
+    limit_object['schema']['default'] = default_limit
+    limit_object['schema']['maximum'] = max_limit
+
+    text = f' (maximum={max_limit}, default={default_limit}).'
+    limit_object['description'] += text
+
+    return limit_object

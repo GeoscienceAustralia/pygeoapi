@@ -2,7 +2,7 @@
 #
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2021 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -29,7 +29,8 @@
 
 import logging
 
-from pygeoapi.provider.base import BaseProvider, ProviderInvalidDataError
+from pygeoapi.provider.base import (BaseProvider, ProviderInvalidDataError,
+                                    ProviderQueryError)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,21 +55,39 @@ class BaseEDRProvider(BaseProvider):
 
         BaseProvider.__init__(self, provider_def)
 
-#        self.instances = []
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
 
-    @classmethod
-    def register(cls):
-        def inner(fn):
-            if fn.__name__ not in EDR_QUERY_TYPES:
-                msg = 'Invalid EDR Query type'
-                LOGGER.error(msg)
-                raise ProviderInvalidDataError(msg)
+        cls.query_types = [
+            name for name, function in cls.__dict__.items()
+            if name in EDR_QUERY_TYPES and callable(function)
+        ]
 
-            cls.query_types.append(fn.__name__)
-            return fn
-        return inner
+        if not cls.query_types:
+            msg = f"{cls.__name__} does not implement any query types"
+            LOGGER.error(msg)
+            raise ProviderInvalidDataError(msg)
 
-    def get_instance(self, instance):
+        LOGGER.debug(
+            f'{cls.__name__} registered query types: {cls.query_types}'
+        )
+
+        if 'items' in cls.query_types:
+            LOGGER.warning(
+                f'items query is registered in {cls.__name__}, '
+                'but requests will be routed to a feature provider'
+            )
+
+    def instances(self):
+        """
+        Get a list of instance identifiers
+
+        :returns: `list` of instance identifiers
+        """
+
+        return NotImplementedError()
+
+    def instance(self, instance):
         """
         Validate instance identifier
 
@@ -86,6 +105,57 @@ class BaseEDRProvider(BaseProvider):
 
         return self.query_types
 
+    def get_parameters(
+        self, parameters: set | list = [], as_list=False
+    ) -> dict | list:
+        """
+        Generate CoverageJSON parameters from provider field defintions
+
+        :param parameters: List of the subset of parameters include.
+        :param as_list: bool to return as a list of parameter definitions.
+                        GeoJSON parameters are returned as an array
+                        https://github.com/opengeospatial/ogcapi-environmental-data-retrieval/issues/633
+
+
+        :returns: A dictionary or list containing the parameter definition.
+        """
+        if not parameters:
+            parameters = set(self.fields.keys())
+
+        out_params = {}
+        for name in set(parameters):
+            conf_ = self.fields[name]
+            p_label = conf_.get('title')
+            out_params[name] = {
+                'id': name,
+                'type': 'Parameter',
+                'name': p_label,
+                'observedProperty': {
+                    'id': name,
+                    'label': {'en': p_label}
+                },
+                'unit': {
+                    'symbol': {
+                        'value': conf_['x-ogc-unit'],
+                        'type': 'http://www.opengis.net/def/uom/UCUM/'
+                    }
+                }
+            }
+
+            # Add description if available
+            p_description = conf_.get('description')
+            if p_description is not None:
+                out_params[name]['observedProperty'].update({
+                    'description': {
+                        'en': p_description
+                    }
+                })
+
+        if as_list:
+            return list(out_params.values())
+        else:
+            return out_params
+
     def query(self, **kwargs):
         """
         Extract data from collection collection
@@ -97,13 +167,20 @@ class BaseEDRProvider(BaseProvider):
         :param z: vertical level(s)
         :param format_: data format of output
         :param bbox: bbox geometry (for cube queries)
-        :param within: distance (for radius querires)
-        :param within_units: distance units (for radius querires)
+        :param within: distance (for radius queries)
+        :param within_units: distance units (for radius queries)
+        :param instance: instance name (for instances queries)
+        :param limit: number of records to return (for locations queries)
+        :param location_id: location identifier (for locations queries)
 
         :returns: coverage data as `dict` of CoverageJSON or native format
         """
-
+        query_type = kwargs.get('query_type')
+        if query_type is None:
+            raise ProviderQueryError('Query type is required')
         try:
-            return getattr(self, kwargs.get('query_type'))(**kwargs)
+            query_function = getattr(self, query_type)
         except AttributeError:
-            raise NotImplementedError('Query not implemented!')
+            raise ProviderQueryError('Query type not implemented')
+
+        return query_function(**kwargs)

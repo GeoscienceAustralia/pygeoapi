@@ -5,7 +5,7 @@
 #          Colin Blackburn <colb@bgs.ac.uk>
 #          Bernhard Mallinger <bernhard.mallinger@eox.at>
 #
-# Copyright (c) 2024 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 # Copyright (c) 2022 John A Stevenson and Colin Blackburn
 # Copyright (c) 2025 Joana Simoes
 #
@@ -37,12 +37,12 @@ import json
 from http import HTTPStatus
 import pytest
 
-from pygeoapi.api import FORMAT_TYPES, F_HTML
 from pygeoapi.api.tiles import (
     get_collection_tiles, tilematrixset,
     tilematrixsets, get_collection_tiles_metadata,
     get_collection_tiles_data
 )
+from pygeoapi.formats import FORMAT_TYPES, F_HTML
 from pygeoapi.models.provider.base import TileMatrixSetEnum
 
 from tests.util import mock_api_request
@@ -94,9 +94,9 @@ def test_tilematrixsets(config, api_):
     assert 'tileMatrixSets' in root
     assert len(root['tileMatrixSets']) == 2
     assert 'http://www.opengis.net/def/tilematrixset/OGC/1.0/WorldCRS84Quad' \
-           in root['tileMatrixSets'][0]['uri']
+           in root['tileMatrixSets'][0]['uri'] or root['tileMatrixSets'][1]['uri'] # noqa
     assert 'http://www.opengis.net/def/tilematrixset/OGC/1.0/WebMercatorQuad' \
-           in root['tileMatrixSets'][1]['uri']
+           in root['tileMatrixSets'][0]['uri'] or root['tileMatrixSets'][1]['uri'] # noqa
 
     req = mock_api_request({'f': 'html'})
     rsp_headers, code, response = tilematrixsets(api_, req)
@@ -137,7 +137,13 @@ def test_tilematrixset(config, api_):
         assert 'id' in root
         assert root['id'] == enum
         assert 'tileMatrices' in root
-        assert len(root['tileMatrices']) == 30
+
+        if enum == "WebMercatorQuad":
+            assert len(root['tileMatrices']) == 25
+        elif enum == "WorldCRS84Quad":
+            assert len(root['tileMatrices']) == 24
+        else:
+            assert len(root['tileMatrices']) > 0
 
     rsp_headers, code, response = tilematrixset(api_, req, 'foo')
     assert code == HTTPStatus.BAD_REQUEST

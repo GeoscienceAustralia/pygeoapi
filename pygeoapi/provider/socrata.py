@@ -35,9 +35,10 @@ from urllib.parse import urlparse
 from sodapy import Socrata
 import logging
 
+from pygeoapi.crs import crs_transform
 from pygeoapi.provider.base import (BaseProvider, ProviderQueryError,
                                     ProviderConnectionError)
-from pygeoapi.util import format_datetime, crs_transform
+from pygeoapi.util import format_datetime
 
 LOGGER = logging.getLogger(__name__)
 
@@ -122,9 +123,13 @@ class SODAServiceProvider(BaseProvider):
 
         fc = {
             'type': 'FeatureCollection',
-            'features': [],
-            'numberMatched': self._get_count(params)
+            'features': []
         }
+
+        if self.count or resulttype == 'hits':
+            matched = self._get_count(params)
+            LOGGER.debug(f'Found {matched} result(s)')
+            fc['numberMatched'] = matched
 
         if resulttype == 'hits':
             # Return hits
@@ -138,7 +143,7 @@ class SODAServiceProvider(BaseProvider):
         params['limit'] = limit
 
         def make_feature(f):
-            f['id'] = f['properties'].pop(self.id_field)
+            f['id'] = f['properties'][self.id_field]
             if skip_geometry:
                 f['geometry'] = None
             return f
@@ -178,7 +183,7 @@ class SODAServiceProvider(BaseProvider):
         LOGGER.debug('Sending query')
         fc = self.client.get(self.resource_id, **params)
         f = fc.get('features').pop()
-        f['id'] = f['properties'].pop(self.id_field)
+        f['id'] = f['properties'][self.id_field]
         return f
 
     def _make_fields(self, select_properties=[]):

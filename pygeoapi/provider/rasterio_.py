@@ -2,7 +2,7 @@
 #
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2024 Tom Kralidis
+# Copyright (c) 2025 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -29,6 +29,7 @@
 
 import logging
 
+import numpy as np
 from pyproj import CRS, Transformer
 import rasterio
 from rasterio.io import MemoryFile
@@ -79,9 +80,11 @@ class RasterioProvider(BaseProvider):
 
                 dtype2 = dtype
                 if dtype.startswith('float'):
-                    dtype2 = 'number'
+                    dtype2 = 'float'
                 elif dtype.startswith('int'):
                     dtype2 = 'integer'
+                elif dtype.startswith('str'):
+                    dtype2 = 'string'
 
                 self._fields[i2] = {
                     'title': name,
@@ -306,7 +309,9 @@ class RasterioProvider(BaseProvider):
 
             parameter = {
                 'type': 'Parameter',
-                'description': pm['description'],
+                'description': {
+                    'en': pm['description']
+                },
                 'unit': {
                     'symbol': pm['unit_label']
                 },
@@ -330,7 +335,10 @@ class RasterioProvider(BaseProvider):
                     'shape': [metadata['height'], metadata['width']],
                 }
                 # TODO: deal with multi-band value output
-                cj['ranges'][key]['values'] = data.flatten().tolist()
+                cj['ranges'][key]['values'] = [None if isinstance(v, float)
+                                               and np.isnan(v)
+                                               else v for v in
+                                               data.flatten().tolist()]
         except IndexError as err:
             LOGGER.warning(err)
             raise ProviderQueryError('Invalid query parameter')

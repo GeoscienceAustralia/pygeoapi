@@ -9,12 +9,6 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.3.1/dist/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.3.1/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.vectorgrid@latest/dist/Leaflet.VectorGrid.bundled.js"></script>
-    <style>
-      .leaflet-popup-content {
-          width: 200px;
-          height: 100px;
-      }
-    </style>
 {% endblock %}
 
 {% block body %}
@@ -69,6 +63,7 @@
 
 {% block extrafoot %}
     <script>
+    if (scheme !== "WorldCRS84Quad"){
     var map = L.map('items-map').setView([{{ 45 }}, {{ -75 }}], 10);
 
     map.addLayer(new L.TileLayer(
@@ -78,6 +73,27 @@
         }
     ));
 
+    } else {
+
+    var map = L.map('items-map',{
+        crs: L.CRS.EPSG4326
+    }).setView([{{ 45 }}, {{ -75 }}], 10);
+
+    map.addLayer(new L.TileLayer(
+        '{{ config["server"]["map"]["url"] }}', {
+            maxZoom: {{ data['maxzoom'] }},
+            attribution: '{{ config["server"]["map"]["attribution"] | safe }}',
+            tileSize: L.point(512, 256)
+        }
+    ));
+    document.getElementById('items-map').insertAdjacentHTML(
+        'afterend', 
+        '<div style="margin-top: 1rem; text-align: center;">' +
+        '{% trans %}Warning: Basemap may be in a different projection{% endtrans %}' +
+        '</div>'
+    );
+
+    }
     {% for link in data["links"] %}
       {% if link["rel"] == "item" %}
         var tilesUrl = '{{ link["href"] }}';
@@ -100,15 +116,15 @@
         ));
     {% elif data['tile_type'] == 'vector' %}
         url = url
-            .replace("tileRow", "x")
-            .replace("tileCol", "y");
+            .replace("tileRow", "y")
+            .replace("tileCol", "x");
         var VectorTileOptions = {
             interactive: true,
             rendererFactory: L.canvas.tile,
             maxZoom: {{ data['maxzoom'] }},
             indexMaxZoom: 5,
             getFeatureId: function(feat) {
-                return feat.properties["id"]
+                return feat.properties.id || feat.properties.fid || feat.properties.uri;
             }
         };
 
@@ -122,14 +138,8 @@
 
         var tilesPbfLayer = L.vectorGrid.protobuf(url, VectorTileOptions)
             .on('click', function(e) { // The .on method attaches an event handler
-                L.popup()
-                    .setContent("<b>Name</b>: " + e.layer.properties.name +
-                        "<br><b>Class</b>: " + e.layer.properties.featureclass)
-                    .setLatLng(e.latlng)
-                    .openOn(map);
-
                 clearHighlight();
-                highlight = e.layer.properties.id;
+                highlight = e.layer.properties.id || e.layer.properties.fid || e.layer.properties.uri;
                 tilesPbfLayer.setFeatureStyle(highlight, {
                     weight: 2,
                     color: 'red',

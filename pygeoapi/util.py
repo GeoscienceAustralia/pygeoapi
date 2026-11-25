@@ -2,7 +2,7 @@
 #
 # Authors: Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2022 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -30,14 +30,13 @@
 """Generic util functions used in the code"""
 
 import base64
-from copy import deepcopy
 from filelock import FileLock
-import functools
-from functools import partial
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from enum import Enum
+from heapq import heappush
+import ipaddress
 import json
 import logging
 import mimetypes
@@ -45,7 +44,8 @@ import os
 import pathlib
 from pathlib import Path
 import re
-from typing import Any, IO, Union, List, Optional, Callable
+import socket
+from typing import Any, IO, Union, List, Optional
 from urllib.parse import urlparse
 from urllib.request import urlopen
 import uuid
@@ -54,24 +54,11 @@ import dateutil.parser
 from babel.support import Translations
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from jinja2.exceptions import TemplateNotFound
-import pyproj
-import pygeofilter.ast
-import pygeofilter.values
-from pyproj.exceptions import CRSError
 from requests import Session
 from requests.structures import CaseInsensitiveDict
-from shapely import ops
 from shapely.geometry import (
     box,
-    GeometryCollection,
-    LinearRing,
-    LineString,
-    MultiLineString,
-    MultiPoint,
-    MultiPolygon,
     Polygon,
-    Point,
-    shape as geojson_to_geom,
     mapping as geom_to_geojson,
 )
 import yaml
@@ -79,36 +66,18 @@ import yaml
 from pygeoapi import __version__
 from pygeoapi import l10n
 from pygeoapi.models import config as config_models
-from pygeoapi.provider.base import ProviderTypeError
-
+from pygeoapi.plugin import load_plugin, PLUGINS
+from pygeoapi.provider import get_provider_default
 
 LOGGER = logging.getLogger(__name__)
 
 DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 
 THISDIR = Path(__file__).parent.resolve()
-TEMPLATES = THISDIR / 'templates'
-
-
-# Type for Shapely geometrical objects.
-GeomObject = Union[
-    GeometryCollection,
-    LinearRing,
-    LineString,
-    MultiLineString,
-    MultiPoint,
-    MultiPolygon,
-    Point,
-    Polygon,
-]
-
-
-@dataclass
-class CrsTransformSpec:
-    source_crs_uri: str
-    source_crs_wkt: str
-    target_crs_uri: str
-    target_crs_wkt: str
+RESOURCESDIR = THISDIR / 'resources'
+TEMPLATESDIR = THISDIR / 'templates'
+DEFINITIONSDIR = RESOURCESDIR / 'definitions'
+SCHEMASDIR = RESOURCESDIR / 'schemas'
 
 
 mimetypes.add_type('text/plain', '.yaml')
@@ -235,13 +204,26 @@ def yaml_dump(dict_: dict, destfile: str) -> bool:
 
     yaml.add_multi_representer(pathlib.PurePath, path_representer)
 
+    def datetime_representer(dumper, data: datetime):
+        if data.tzinfo is None:
+            data = data.replace(tzinfo=timezone.utc)
+        else:
+            data = data.astimezone(timezone.utc)
+        value = data.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # timestamp in a specified format, without string quotes
+        return dumper.represent_scalar(u'tag:yaml.org,2002:timestamp', value)
+
+    yaml.add_representer(datetime, datetime_representer)
+
     lock = FileLock(f'{destfile}.lock')
 
     with lock:
         LOGGER.debug('Dumping YAML document')
         with open(destfile, 'wb') as fh:
-            yaml.dump(dict_, fh, sort_keys=False, encoding='utf8', indent=4,
-                      default_flow_style=False)
+            yaml.dump(dict_, fh, sort_keys=False, encoding='utf8',
+                      indent=4, default_flow_style=False,
+                      allow_unicode=True)
 
     return True
 
@@ -268,7 +250,7 @@ def str2bool(value: Union[bool, str]) -> bool:
 
 def to_json(dict_: dict, pretty: bool = False) -> str:
     """
-    Serialize dict to json
+    Serialize dict to JSON
 
     :param dict_: `dict` of JSON representation
     :param pretty: `bool` of whether to prettify JSON (default is `False`)
@@ -281,25 +263,44 @@ def to_json(dict_: dict, pretty: bool = False) -> str:
     else:
         indent = None
 
-    return json.dumps(dict_, default=json_serial, indent=indent,
-                      separators=(',', ':'))
+    LOGGER.debug('Dumping JSON')
+    json_dump = json.dumps(dict_, default=json_serial, indent=indent,
+                           separators=(',', ':'))
+
+    LOGGER.debug('Escaping < and >')
+    json_dump = json_dump.replace('<', '&lt;')
+    json_dump = json_dump.replace('>', '&gt;')
+
+    return json_dump
 
 
-def format_datetime(value: str, format_: str = DATETIME_FORMAT) -> str:
+def format_datetime(value: Union[str, datetime],
+                    format_: str = DATETIME_FORMAT) -> str:
     """
     Parse datetime as ISO 8601 string; re-present it in particular format
     for display in HTML
 
-    :param value: `str` of ISO datetime
+    :param value: `str` of ISO datetime or `datetime.datetime`
     :param format_: `str` of datetime format for strftime
 
     :returns: string
     """
 
-    if not isinstance(value, str) or not value.strip():
+    datetime_ = None
+
+    if any([
+       not isinstance(value, (str, datetime)),
+       isinstance(value, str) and not value.strip()
+       ]):
+        LOGGER.debug(f'Invalid datetime value: {value}')
         return ''
 
-    return dateutil.parser.isoparse(value).strftime(format_)
+    if isinstance(value, str):
+        datetime_ = dateutil.parser.isoparse(value).strftime(format_)
+    if isinstance(value, datetime):
+        datetime_ = value.strftime(format_)
+
+    return datetime_
 
 
 def get_current_datetime(tz: timezone = timezone.utc,
@@ -350,21 +351,45 @@ def human_size(nbytes: int) -> str:
     return f'{f}{suffixes[i]}'
 
 
-def format_duration(start: str, end: str = None) -> str:
+def format_duration(start: Union[str, datetime],
+                    end: Union[str, datetime] = None) -> str:
     """
     Parse a start and (optional) end datetime as ISO 8601 strings, calculate
     the difference, and return that duration as a string.
 
-    :param start: `str` of ISO datetime
-    :param end: `str` of ISO datetime, defaults to `start` for a 0 duration
+    :param start: `str` of ISO datetime or `datetime`
+    :param end: `str` of ISO datetime or `datetime`, defaults to `start`
+                for a 0 duration
 
     :returns: string
     """
 
-    if not isinstance(start, str) or not start.strip():
+    if any([
+       not isinstance(start, (str, datetime)),
+       isinstance(start, str) and not start.strip()
+       ]):
+        LOGGER.debug(f'Invalid datetime start: {start}')
         return ''
+
     end = end or start
-    duration = dateutil.parser.isoparse(end) - dateutil.parser.isoparse(start)
+
+    if isinstance(start, str):
+        start2 = dateutil.parser.isoparse(start)
+    if isinstance(start, datetime):
+        start2 = start
+
+    if isinstance(end, str):
+        end2 = dateutil.parser.isoparse(end)
+    if isinstance(end, datetime):
+        end2 = end
+
+    if start2.tzinfo is None:
+        start2 = start2.replace(tzinfo=timezone.utc)
+    if end2.tzinfo is None:
+        end2 = end2.replace(tzinfo=timezone.utc)
+
+    duration = end2 - start2
+
     return str(duration)
 
 
@@ -448,7 +473,7 @@ def render_j2_template(config: dict, tpl_config: dict, template: Path,
     :returns: string of rendered template
     """
 
-    template_paths = [TEMPLATES, '.']
+    template_paths = [TEMPLATESDIR, '.']
 
     locale_dir = config['server'].get('locale_dir', 'locale')
     LOGGER.debug(f'Locale directory: {locale_dir}')
@@ -458,7 +483,7 @@ def render_j2_template(config: dict, tpl_config: dict, template: Path,
         template_paths.insert(0, templates)
         LOGGER.debug(f'using custom templates: {templates}')
     except (KeyError, TypeError):
-        LOGGER.debug(f'using default templates: {TEMPLATES}')
+        LOGGER.debug(f'using default templates: {TEMPLATESDIR}')
 
     env = Environment(loader=FileSystemLoader(template_paths),
                       extensions=['jinja2.ext.i18n'],
@@ -544,61 +569,6 @@ def filter_dict_by_key_value(dict_: dict, key: str, value: str) -> dict:
     """
 
     return {k: v for (k, v) in dict_.items() if v[key] == value}
-
-
-def filter_providers_by_type(providers: list, type: str) -> dict:
-    """
-    helper function to filter a list of providers by type
-
-    :param providers: ``list``
-    :param type: str
-
-    :returns: filtered ``dict`` provider
-    """
-
-    providers_ = {provider['type']: provider for provider in providers}
-    return providers_.get(type)
-
-
-def get_provider_by_type(providers: list, provider_type: str) -> dict:
-    """
-    helper function to load a provider by a provider type
-
-    :param providers: ``list`` of providers
-    :param provider_type: type of provider (e.g. feature)
-
-    :returns: provider based on type
-    """
-
-    LOGGER.debug(f'Searching for provider type {provider_type}')
-    try:
-        p = (next(d for i, d in enumerate(providers)
-                  if d['type'] == provider_type))
-    except (RuntimeError, StopIteration):
-        raise ProviderTypeError('Invalid provider type requested')
-
-    return p
-
-
-def get_provider_default(providers: list) -> dict:
-    """
-    helper function to get a resource's default provider
-
-    :param providers: ``list`` of providers
-
-    :returns: filtered ``dict``
-    """
-
-    try:
-        default = (next(d for i, d in enumerate(providers) if 'default' in d
-                   and d['default']))
-        LOGGER.debug('found default provider type')
-    except StopIteration:
-        LOGGER.debug('no default provider type.  Returning first provider')
-        default = providers[0]
-
-    LOGGER.debug(f"Default provider: {default['type']}")
-    return default
 
 
 class ProcessExecutionMode(Enum):
@@ -692,205 +662,6 @@ def get_envelope(coords_list: List[List[float]]) -> list:
             [bounds[2], bounds[1]]]
 
 
-def get_supported_crs_list(config: dict, default_crs_list: list) -> list:
-    """
-    Helper function to get a complete list of supported CRSs
-    from a (Provider) config dict. Result should always include
-    a default CRS according to OAPIF Part 2 OGC Standard.
-    This will be the default when no CRS list in config or
-    added when (partially) missing in config.
-
-    Author: @justb4
-
-    :param config: dictionary with or without a list of CRSs
-    :param default_crs_list: default CRS alternatives, first is default
-    :returns: list of supported CRSs
-    """
-    supported_crs_list = config.get('crs', list())
-    contains_default = False
-    for uri in supported_crs_list:
-        if uri in default_crs_list:
-            contains_default = True
-            break
-
-    # A default CRS is missing: add the first which is the default
-    if not contains_default:
-        supported_crs_list.append(default_crs_list[0])
-    return supported_crs_list
-
-
-def get_crs_from_uri(uri: str) -> pyproj.CRS:
-    """
-    Get a `pyproj.CRS` instance from a CRS URI.
-    Author: @MTachon
-
-    :param uri: Uniform resource identifier of the coordinate
-                reference system. In accordance with
-                https://docs.ogc.org/pol/09-048r5.html#_naming_rule URIs can
-                take either the form of a URL or a URN
-    :raises `CRSError`: Error raised if no CRS could be identified from the
-        URI.
-
-    :returns: `pyproj.CRS` instance matching the input URI.
-    :rtype: `pyproj.CRS`
-    """
-
-    # normalize the input `uri` to a URL first
-    url = uri.replace(
-        "urn:ogc:def:crs",
-        "http://www.opengis.net/def/crs"
-    ).replace(":", "/")
-    try:
-        authority, code = url.rsplit("/", maxsplit=3)[1::2]
-        crs = pyproj.CRS.from_authority(authority, code)
-    except ValueError:
-        msg = (
-            f"CRS could not be identified from URI {uri!r}. CRS URIs must "
-            "follow one of two formats: "
-            "'http://www.opengis.net/def/crs/{authority}/{version}/{code}' or "
-            "'urn:ogc:def:crs:{authority}:{version}:{code}' "
-            "(see https://docs.opengeospatial.org/is/18-058r1/18-058r1.html#crs-overview)."  # noqa
-        )
-        LOGGER.error(msg)
-        raise CRSError(msg)
-    except CRSError:
-        msg = f"CRS could not be identified from URI {uri!r}"
-        LOGGER.error(msg)
-        raise CRSError(msg)
-    else:
-        return crs
-
-
-def get_transform_from_crs(
-    crs_in: pyproj.CRS, crs_out: pyproj.CRS, always_xy: bool = False
-) -> Callable[[GeomObject], GeomObject]:
-    """ Get transformation function from two `pyproj.CRS` instances.
-
-    Get function to transform the coordinates of a Shapely geometrical object
-    from one coordinate reference system to another.
-
-    :param crs_in: Coordinate Reference System of the input geometrical object.
-    :type crs_in: `pyproj.CRS`
-    :param crs_out: Coordinate Reference System of the output geometrical
-        object.
-    :type crs_out: `pyproj.CRS`
-    :param always_xy: should axis order be forced to x,y (lon, lat) even if CRS
-         declares y,x (lat,lon)
-    :type always_xy: `bool`
-
-    :returns: Function to transform the coordinates of a `GeomObject`.
-    :rtype: `callable`
-    """
-    crs_transform = pyproj.Transformer.from_crs(
-        crs_in, crs_out, always_xy=always_xy,
-    ).transform
-    return partial(ops.transform, crs_transform)
-
-
-def crs_transform(func):
-    """Decorator that transforms the geometry's/geometries' coordinates of a
-    Feature/FeatureCollection.
-
-    This function can be used to decorate another function which returns either
-    a Feature or a FeatureCollection (GeoJSON-like `dict`). For a
-    FeatureCollection, the Features are stored in a ´list´ available at the
-    'features' key of the returned `dict`. For each Feature, the geometry is
-    available at the 'geometry' key. The decorated function may take a
-    'crs_transform_spec' parameter, which accepts a `CrsTransformSpec` instance
-    as value. If the `CrsTransformSpec` instance represents a coordinates
-    transformation between two different CRSs, the coordinates of the
-    Feature's/FeatureCollection's geometry/geometries will be transformed
-    before returning the Feature/FeatureCollection. If the 'crs_transform_spec'
-    parameter is not given, passed `None` or passed a `CrsTransformSpec`
-    instance which does not represent a coordinates transformation, the
-    Feature/FeatureCollection is returned unchanged. This decorator can for
-    example be use to help supporting coordinates transformation of
-    Feature/FeatureCollection `dict` objects returned by the `get` and `query`
-    methods of (new or with no native support for transformations) providers of
-    type 'feature'.
-
-    :param func: Function to decorate.
-    :type func: `callable`
-
-    :returns: Decorated function.
-    :rtype: `callable`
-    """
-    @functools.wraps(func)
-    def get_geojsonf(*args, **kwargs):
-        crs_transform_spec = kwargs.get('crs_transform_spec')
-        result = func(*args, **kwargs)
-        if crs_transform_spec is None:
-            # No coordinates transformation for feature(s) returned by the
-            # decorated function.
-            LOGGER.debug('crs_transform: NOT applying coordinate transforms')
-            return result
-        # Create transformation function and transform the output feature(s)'
-        # coordinates before returning them.
-        transform_func = get_transform_from_crs(
-            pyproj.CRS.from_wkt(crs_transform_spec.source_crs_wkt),
-            pyproj.CRS.from_wkt(crs_transform_spec.target_crs_wkt),
-        )
-
-        LOGGER.debug(f'crs_transform: transforming features CRS '
-                     f'from {crs_transform_spec.source_crs_uri} '
-                     f'to {crs_transform_spec.target_crs_uri}')
-
-        features = result.get('features')
-        # Decorated function returns a single Feature
-        if features is None:
-            # Transform the feature's coordinates
-            crs_transform_feature(result, transform_func)
-        # Decorated function returns a FeatureCollection
-        else:
-            # Transform all features' coordinates
-            for feature in features:
-                crs_transform_feature(feature, transform_func)
-        return result
-    return get_geojsonf
-
-
-def crs_transform_feature(feature, transform_func):
-    """Transform the coordinates of a Feature.
-
-    :param feature: Feature (GeoJSON-like `dict`) to transform.
-    :type feature: `dict`
-    :param transform_func: Function that transforms the coordinates of a
-        `GeomObject` instance.
-    :type transform_func: `callable`
-
-    :returns: None
-    """
-    json_geometry = feature.get('geometry')
-    if json_geometry is not None:
-        feature['geometry'] = geom_to_geojson(
-            transform_func(geojson_to_geom(json_geometry))
-        )
-
-
-def transform_bbox(bbox: list, from_crs: str, to_crs: str) -> list:
-    """
-    helper function to transform a bounding box (bbox) from
-    a source to a target CRS. CRSs in URI str format.
-    Uses pyproj Transformer.
-
-    :param bbox: list of coordinates in 'from_crs' projection
-    :param from_crs: CRS URI to transform from
-    :param to_crs: CRS URI to transform to
-    :raises `CRSError`: Error raised if no CRS could be identified from an
-        URI.
-
-    :returns: list of 4 or 6 coordinates
-    """
-
-    from_crs_obj = get_crs_from_uri(from_crs)
-    to_crs_obj = get_crs_from_uri(to_crs)
-    transform_func = pyproj.Transformer.from_crs(
-        from_crs_obj, to_crs_obj).transform
-    n_dims = len(bbox) // 2
-    return list(transform_func(*bbox[:n_dims]) + transform_func(
-        *bbox[n_dims:]))
-
-
 class UrlPrefetcher:
     """ Prefetcher to get HTTP headers for specific URLs.
     Allows a maximum of 1 redirect by default.
@@ -930,127 +701,122 @@ def bbox2geojsongeometry(bbox: list) -> dict:
     return geom_to_geojson(b)
 
 
-def modify_pygeofilter(
-        ast_tree: pygeofilter.ast.Node,
-        *,
-        filter_crs_uri: str,
-        storage_crs_uri: Optional[str] = None,
-        geometry_column_name: Optional[str] = None
-) -> pygeofilter.ast.Node:
+def get_from_headers(headers: dict, header_name: str) -> str:
     """
-    Modifies the input pygeofilter with information from the provider.
+    Gets case insensitive value from dictionary.
+    This is particularly useful when trying to get
+    headers from Starlette and Flask without issue
 
-    :param ast_tree: `pygeofilter.ast.Node` representing the
-                     already parsed pygeofilter expression
-    :param filter_crs_uri: URI of the CRS being used in the filtering
-                           expression
-    :param storage_crs_uri: An optional string containing the URI of
-                            the provider's storage CRS
-    :param geometry_column_name: An optional string containing the
-                                 actual name of the provider's geometry field
-    :returns: A new pygeofilter.ast.Node, with the modified filter
-              expression
+    :param headers: `dict` of request headers.
+    :param header_name: Name of request header.
 
-    This function modifies the parsed pygeofilter that contains the raw
-    filter expression provided by an external client. It performs the
-    following modifications:
-
-    - if the filter includes any spatial coordinates and they are being
-      provided in a different CRS from the provider's storage CRS, the
-      corresponding geometries are transformed into the storage CRS
-
-    - if the filter includes the generic 'geometry' name as a reference to
-      the actual geometry of features, it is replaced by the actual name
-      of the geometry field, as specified by the provider
-
+    :returns: `str` value of header
     """
-    new_tree = deepcopy(ast_tree)
-    if storage_crs_uri:
-        storage_crs = get_crs_from_uri(storage_crs_uri)
-        filter_crs = get_crs_from_uri(filter_crs_uri)
-        _inplace_transform_filter_geometries(new_tree, filter_crs, storage_crs)
-    if geometry_column_name:
-        _inplace_replace_geometry_filter_name(new_tree, geometry_column_name)
-    return new_tree
+
+    cleaned_headers = {k.strip().lower(): v for k, v in headers.items()}
+    return cleaned_headers.get(header_name.lower(), '')
 
 
-def _inplace_transform_filter_geometries(
-        node: pygeofilter.ast.Node,
-        filter_crs: pyproj.CRS,
-        storage_crs: pyproj.CRS
-):
+def get_choice_from_headers(headers: dict,
+                            header_name: str,
+                            all: bool = False) -> Union[str, List[str]]:
     """
-    Recursively traverse node tree and convert coordinates to the storage CRS.
+    Gets choices from a request dictionary,
+    considering numerical ordering of preferences.
+    Supported are complex preference strings (e.g. "fr-CH, fr;q=0.9, en;q=0.8")
 
-    This function modifies nodes in the already-parsed filter in order to find
-    any geometry literals that may be used in the filter and, if necessary,
-    proceeds to convert spatial coordinates to the CRS used by the provider.
+    :param headers: `dict` of request headers.
+    :param header_name: Name of request header.
+    :param all: bool to return one or all header values.
+
+    :returns: Sorted choice or choices from header
     """
-    try:
-        sub_nodes = node.get_sub_nodes()
-    except AttributeError:
-        pass
-    else:
-        for sub_node in sub_nodes:
-            is_geometry_node = isinstance(
-                sub_node, pygeofilter.values.Geometry)
-            if is_geometry_node:
-                # NOTE1: To be flexible, and since pygeofilter
-                # already supports it, in addition to supporting
-                # the `filter-crs` parameter, we also support having a
-                # geometry defined in EWKT, meaning the CRS is provided
-                # inline, like this `SRID=<CRS_CODE>;<WKT>` - If provided,
-                # this overrides the value of `filter-crs`. This enables
-                # supporting, for example, an exotic filter expression with
-                # multiple geometries specified in different CRSs
 
-                # NOTE2: We specify a default CRS using a URI of type URN
-                # because this is what pygeofilter uses internally too
+    # Select header of interest
+    header = get_from_headers(headers=headers, header_name=header_name)
+    if header == '':
+        return
 
-                crs_urn_provided_in_ewkt = sub_node.geometry.get(
-                    'crs', {}).get('properties', {}).get('name')
-                if crs_urn_provided_in_ewkt is not None:
-                    crs = get_crs_from_uri(crs_urn_provided_in_ewkt)
-                else:
-                    crs = filter_crs
-                if crs != storage_crs:
-                    # convert geometry coordinates to storage crs
-                    geom = geojson_to_geom(sub_node.geometry)
-                    coord_transformer = pyproj.Transformer.from_crs(
-                        crs_from=crs, crs_to=storage_crs).transform
-                    transformed_geom = ops.transform(coord_transformer, geom)
-                    sub_node.geometry = geom_to_geojson(transformed_geom)
-                # ensure the crs is encoded in the sub-node, otherwise
-                # pygeofilter will assign it its own default CRS
-                authority, code = storage_crs.to_authority()
-                sub_node.geometry['crs'] = {
-                    'properties': {
-                        'name': f'urn:ogc:def:crs:{authority}::{code}'
-                    }
-                }
-            else:
-                _inplace_transform_filter_geometries(
-                    sub_node, filter_crs, storage_crs)
+    # Parse choices, extracting optional q values (defaults to 1.0)
+    choices = []
+    for i, part in enumerate(header.split(',')):
+        match = re.match(r'^([^;]+)(?:;q=([\d.]+))?$', part.strip())
+        if match:
+            value, q_value = match.groups()
+            q_value = float(q_value) if q_value else 1.0
+
+            # Sort choices by q value and index
+            if 0 <= q_value <= 1:
+                heappush(choices, (1 / q_value, i, value))
+
+    # Drop q value
+    sorted_choices = [choice[-1] for choice in choices]
+
+    # Return one or all choices
+    return sorted_choices if all else sorted_choices[0]
 
 
-def _inplace_replace_geometry_filter_name(
-        node: pygeofilter.ast.Node,
-        geometry_column_name: str
-):
-    """Recursively traverse node tree and rename nodes of type ``Attribute``.
-
-    Nodes of type ``Attribute`` named ``geometry`` are renamed to the value of
-    the ``geometry_column_name`` parameter.
+def get_dataset_formatters(dataset: dict) -> dict:
     """
-    try:
-        sub_nodes = node.get_sub_nodes()
-    except AttributeError:
-        pass
-    else:
-        for sub_node in sub_nodes:
-            is_attribute_node = isinstance(sub_node, pygeofilter.ast.Attribute)
-            if is_attribute_node and sub_node.name == "geometry":
-                sub_node.name = geometry_column_name
-            else:
-                _inplace_replace_geometry_filter_name(
-                    sub_node, geometry_column_name)
+    Helper function to derive all formatters for a collection
+
+    :param dataset: `dict` of dataset resource definition
+
+    :returns: `dict` of formatters
+    """
+
+    dataset_formatters = {}
+    provider_type = get_provider_default(dataset['providers'])['type']
+
+    for key, value in PLUGINS['formatter'].items():
+        # workaround to keep items-based collections supporting CSV
+        if provider_type not in ['feature', 'record']:
+            continue
+
+        df2 = load_plugin('formatter', {'name': key})
+        dataset_formatters[key] = df2
+
+    for df in dataset.get('formatters', []):
+        df2 = load_plugin('formatter', df)
+        dataset_formatters[df2.name] = df2
+
+    return dataset_formatters
+
+
+def remove_url_auth(url: str) -> str:
+    """
+    Provide a RFC1738 URL without embedded authentication
+    :param url: RFC1738 URL
+    :returns: RFC1738 URL without authentication
+    """
+
+    u = urlparse(url)
+    auth = f'{u.username}:{u.password}@'
+    return url.replace(auth, '')
+
+
+def is_request_allowed(url: str, allow_internal: bool = False) -> bool:
+    """
+    Test whether an HTTP request is allowed to be executed
+
+    :param url: `str` of URL
+    :param allow_internal: `bool` of whether internal requests are
+                           allowed (default `False`)
+
+    :returns: `bool` of whether HTTP request execution is allowed
+    """
+
+    is_allowed = False
+
+    u = urlparse(url)
+
+    ip = socket.gethostbyname(u.hostname)
+
+    is_private = ipaddress.ip_address(ip).is_private
+
+    if not is_private:
+        is_allowed = True
+    if is_private and allow_internal:
+        is_allowed = True
+
+    return is_allowed

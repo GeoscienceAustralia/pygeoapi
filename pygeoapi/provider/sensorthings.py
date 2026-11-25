@@ -36,12 +36,12 @@ from requests.exceptions import ConnectionError
 from urllib.parse import urlparse
 
 from pygeoapi.config import get_config
+from pygeoapi.crs import crs_transform
 from pygeoapi.provider.base import (
     BaseProvider, ProviderQueryError, ProviderConnectionError,
     ProviderInvalidDataError)
 from pygeoapi.util import (
-    url_join, get_provider_default, crs_transform, get_base_url,
-    get_typed_value)
+    url_join, get_provider_default, get_base_url, get_typed_value)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -305,7 +305,7 @@ class SensorThingsProvider(BaseProvider):
 
         :returns: dict of GeoJSON Feature
         """
-        _ = feature.pop(self.id_field)
+        _ = feature[self.id_field]
         id = f"'{_}'" if isinstance(_, str) else str(_)
         f = {
             'type': 'Feature', 'id': id, 'properties': {}, 'geometry': None

@@ -5,7 +5,7 @@
 #          Colin Blackburn <colb@bgs.ac.uk>
 #          Bernhard Mallinger <bernhard.mallinger@eox.at>
 #
-# Copyright (c) 2024 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 # Copyright (c) 2022 John A Stevenson and Colin Blackburn
 #
 # Permission is hereby granted, free of charge, to any person
@@ -37,12 +37,28 @@ from http import HTTPStatus
 import time
 from unittest import mock
 
-from pygeoapi.api import FORMAT_TYPES, F_HTML, F_JSON
+import pytest
+
+from pygeoapi.api import API
 from pygeoapi.api.processes import (
     describe_processes, execute_process, delete_job, get_job_result, get_jobs
 )
+from pygeoapi.formats import FORMAT_TYPES, F_HTML, F_JSON
+from pygeoapi.util import yaml_load
 
-from tests.util import mock_api_request
+from tests.util import get_test_file_path, mock_api_request
+
+
+@pytest.fixture()
+def config_process_metadata() -> dict:
+    """ Returns a pygeoapi configuration with process metadata."""
+    with open(get_test_file_path('pygeoapi-test-config-process-metadata.yml')) as fh:  # noqa
+        return yaml_load(fh)
+
+
+@pytest.fixture()
+def api_process_metadata(config_process_metadata, openapi):
+    return API(config_process_metadata, openapi)
 
 
 def test_describe_processes(config, api_):
@@ -79,7 +95,7 @@ def test_describe_processes(config, api_):
     assert process['title'] == 'Hello World'
     assert len(process['keywords']) == 3
     assert len(process['links']) == 6
-    assert len(process['inputs']) == 2
+    assert len(process['inputs']) == 4
     assert len(process['outputs']) == 1
     assert len(process['outputTransmission']) == 1
     assert len(process['jobControlOptions']) == 2
@@ -143,13 +159,30 @@ def test_describe_processes(config, api_):
 
     # Test describe doesn't crash if example is missing
     req = mock_api_request()
-    processor = api_.manager.get_processor("hello-world")
-    example = processor.metadata.pop("example")
+    processor = api_.manager.get_processor('hello-world')
+    example = processor.metadata.pop('example')
     rsp_headers, code, response = describe_processes(api_, req)
     processor.metadata['example'] = example
     data = json.loads(response)
     assert code == HTTPStatus.OK
     assert len(data['processes']) == 2
+
+
+def test_describe_processes_metadata(config_process_metadata,
+                                     api_process_metadata):
+
+    req = mock_api_request({'limit': 1})
+    # Test for description of single processes
+    rsp_headers, code, response = describe_processes(
+        api_process_metadata, req, 'echo')
+    data = json.loads(response)
+    assert code == HTTPStatus.OK
+    assert len(data['jobControlOptions']) == 2
+    assert 'sync-execute' in data['jobControlOptions']
+    assert 'async-execute' in data['jobControlOptions']
+    assert len(data['outputTransmission']) == 2
+    assert 'value' in data['outputTransmission']
+    assert 'reference' in data['outputTransmission']
 
 
 def test_execute_process(config, api_):
@@ -203,6 +236,23 @@ def test_execute_process(config, api_):
             'name': 'Test document'
         },
         'response': 'document'
+    }
+    req_body_9 = {
+        'inputs': {
+            'name': 'Test document'
+        }
+    }
+    req_body_10 = {
+        'inputs': {
+            'name': 'Test document as bytes response',
+            'as_bytes': True
+        }
+    }
+    req_body_11 = {
+        'inputs': {
+            'name': 'Test document as text/plain media type',
+            'media_type': 'text/plain'
+        }
     }
 
     cleanup_jobs = set()
@@ -326,10 +376,16 @@ def test_execute_process(config, api_):
     req = mock_api_request(data=req_body_1, HTTP_Prefer='respond-async')
     rsp_headers, code, response = execute_process(api_, req, 'hello-world')
 
-    assert 'Location' in rsp_headers
     response = json.loads(response)
-    assert isinstance(response, dict)
     assert code == HTTPStatus.CREATED
+
+    assert 'Location' in rsp_headers
+    assert isinstance(response, dict)
+    assert 'jobID' in response
+    assert 'type' in response
+    assert 'status' in response
+    assert response['type'] == 'process'
+    assert response['status'] == 'accepted'
 
     cleanup_jobs.add(tuple(['hello-world',
                             rsp_headers['Location'].split('/')[-1]]))
@@ -341,11 +397,12 @@ def test_execute_process(config, api_):
         rsp_headers, code, response = execute_process(api_, req, 'hello-world')
     assert code == HTTPStatus.OK
     post_mocker.assert_any_call(
-        req_body_7['subscriber']['inProgressUri'], json={}
+        req_body_7['subscriber']['inProgressUri'], json={},
+        allow_redirects=False
     )
     post_mocker.assert_any_call(
         req_body_7['subscriber']['successUri'],
-        json={'id': 'echo', 'value': 'Hello Test!'}
+        json={'id': 'echo', 'value': 'Hello Test!'}, allow_redirects=False
     )
     assert post_mocker.call_count == 2
 
@@ -359,6 +416,25 @@ def test_execute_process(config, api_):
     assert code == HTTPStatus.OK
     assert 'outputs' in response
     assert isinstance(response['outputs'], list)
+
+    req = mock_api_request(data=req_body_9)
+    rsp_headers, code, response = execute_process(api_, req, 'hello-world')
+
+    response2 = '{"id":"echo","value":"Hello Test document!"}'
+    assert response == response2
+
+    req = mock_api_request(data=req_body_10)
+    rsp_headers, code, response = execute_process(api_, req, 'hello-world')
+
+    response2 = '{"id":"echo","value":"Hello Test document as bytes response!"}'  # noqa
+    assert response == response2
+
+    req = mock_api_request(data=req_body_11)
+    rsp_headers, code, response = execute_process(api_, req, 'hello-world')
+
+    assert rsp_headers['Content-Type'] == 'text/plain'
+    response2 = '{"id":"echo","value":"Hello Test document as text/plain media type!"}'  # noqa
+    assert response == response2
 
     # Cleanup
     time.sleep(2)  # Allow time for any outstanding async jobs

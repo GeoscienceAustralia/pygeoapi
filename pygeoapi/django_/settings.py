@@ -5,7 +5,7 @@
 #          Krishna Lodha <krishnaglodha@gmail.com>
 #          Tom Kralidis <tomkralidis@gmail.com>
 #
-# Copyright (c) 2022 Francesco Bartoli
+# Copyright (c) 2025 Francesco Bartoli
 # Copyright (c) 2022 Luca Delucchi
 # Copyright (c) 2022 Krishna Lodha
 # Copyright (c) 2022 Tom Kralidis
@@ -175,3 +175,10 @@ API_RULES = get_api_rules(PYGEOAPI_CONFIG)
 # Defaults to True in Django
 # https://docs.djangoproject.com/en/3.2/ref/settings/#append-slash
 APPEND_SLASH = not API_RULES.strict_slashes
+
+# CORS: optionally enable from config.
+if PYGEOAPI_CONFIG['server'].get('cors', False):
+    INSTALLED_APPS.append('corsheaders')
+    MIDDLEWARE.insert(0, 'corsheaders.middleware.CorsMiddleware')
+
+    CORS_ORIGIN_ALLOW_ALL = True

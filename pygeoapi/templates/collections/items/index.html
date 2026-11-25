@@ -16,6 +16,11 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css"/>
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css"/>
     <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster-src.js"></script>
+
+    {% if data['itemtype'] == 'record' %}
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    {% endif %}
 {% endblock %}
 
 {% block body %}
@@ -27,6 +32,36 @@
   </section>
   <section id="items">
     {% if data['features'] %}
+    {% if data['itemtype'] == 'record' %}
+    <div class="row">
+      <div class="col-sm-12 col-md-6">
+        <form id="searchForm">
+          <div class="row">
+            <div class="col-sm-4">
+              <label for="q">Search</label>
+              <input name="q" id="q" type="text" class="form-control search-input" placeholder="Search">
+            </div>
+            <div class="col-sm-4">
+              <label for="datetime_begin">Start date</label>
+              <input name="datetime_begin" id="datetime_begin" type="date" class="form-control" />
+            </div>
+            <div class="col-sm-4">
+              <label for="datetime_end">End date</label>
+              <input name="datetime_end" id="datetime_end" type="date" class="form-control" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-sm-12">
+              <input class="form-check-input" onchange="checkSpatialFilter()"  type="checkbox" id="spatial_filter_check">
+              <label class="form-check-label" for="spatial_filter_check">Spatial filter</label>
+              <button type="submit" class="btn btn-primary" onclick="submitForm();">Search</button>
+              <button type="reset" class="btn btn-secondary" onclick="document.getElementById('searchForm').reset();">Reset</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% endif %}
     <div class="row">
       <div class="col-sm-12 col-md-6">
         <div class="row">
@@ -45,7 +80,7 @@
                 <div class="col-sm-12">
                   {% trans %}Limit{% endtrans %}:
                   <select id="limits">
-                    <option value="{{ config['server']['limit'] }}">{{ config['server']['limit'] }} ({% trans %}default{% endtrans %})</option>
+                    <option value="{{ config['server']['limits']['default_items'] }}">{{ config['server']['limits']['default_items'] }} ({% trans %}default{% endtrans %})</option>
                     <option value="100">100</option>
                     <option value="1000">1,000</option>
                     <option value="2000">2,000</option>
@@ -155,6 +190,54 @@
 {% block extrafoot %}
 {% if data['features'] %}
     <script>
+    {% if data['itemtype'] == 'record' %}
+
+    document.getElementById("q").addEventListener("keydown", function(event) {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            submitForm();
+        }
+    });
+
+    function submitForm() {
+        var query_string = [];
+        var datetime = [];
+
+        var q = document.getElementById('q').value;
+        var datetime_begin = document.getElementById('datetime_begin');
+        var datetime_end = document.getElementById('datetime_end');
+
+        if (q) {
+            query_string.push('q=' + encodeURIComponent(q));
+        }
+        if (datetime_begin.value !== "") {
+            datetime.push(datetime_begin.value + 'T00:00:00Z');
+        } else {
+            datetime.push('..');
+        }
+        if (datetime_end.value !== "") {
+            datetime.push(datetime_end.value + 'T23:59:59Z');
+        } else {
+            datetime.push('..');
+        }
+
+        datetime = datetime.join('/');
+
+        if (datetime !== '../..') {
+            query_string.push('datetime=' + encodeURIComponent(datetime));
+        }
+
+        if (map.hasLayer(rectangle)) {
+            query_string.push('bbox=' + getBbox(rectangle).join(','));
+        }
+
+        if (query_string.length > 0)  {
+            document.location.href = '{{ data['items_path'] }}' + '?' + query_string.join('&');
+        }
+        datetime_begin.disabled = true;
+        datetime_end.disabled = true;
+    }
+    {% endif %}
     var map = L.map('items-map').setView([{{ -25 }}, {{ 135 }}], 3.25);
     map.addLayer(new L.TileLayer(
         '{{ config['server']['map']['url'] }}', {
@@ -186,6 +269,40 @@
     {% endif %}
 
     map.fitBounds(items.getBounds());
+
+    {% if data['itemtype'] == 'record' %}
+    function getBbox(rect) {
+        bounds = rect.getBounds();
+
+        return [bounds.getWest(),
+                bounds.getSouth(),
+                bounds.getEast(),
+                bounds.getNorth()];
+    }
+
+    var rectangle;
+    function setRectangle(bbox) {
+        if (rectangle) {
+            rectangle.setBounds(bbox)
+        } else {
+            rectangle = L.rectangle(bbox);
+            rectangle.editing.enable();
+            rectangle.setStyle({color :'green'});
+        }
+        map.addLayer(rectangle);
+    }
+
+    function checkSpatialFilter() {
+        if (map.hasLayer(rectangle)) {
+            rectangle.remove();
+        } else {
+            setRectangle(map.getBounds().pad(-0.95));
+        }
+    }
+
+    var form = document.getElementById("searchForm");
+    form.addEventListener("submit", submitForm);
+    {% endif %}
     </script>
 {% endif %}
 {% endblock %}

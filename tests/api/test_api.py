@@ -4,9 +4,11 @@
 #          John A Stevenson <jostev@bgs.ac.uk>
 #          Colin Blackburn <colb@bgs.ac.uk>
 #          Bernhard Mallinger <bernhard.mallinger@eox.at>
+#          Francesco Bartoli <xbartolone@gmail.com>
 #
-# Copyright (c) 2024 Tom Kralidis
+# Copyright (c) 2026 Tom Kralidis
 # Copyright (c) 2022 John A Stevenson and Colin Blackburn
+# Copyright (c) 2026 Francesco Bartoli
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -39,11 +41,11 @@ from pyld import jsonld
 import pytest
 
 from pygeoapi.api import (
-    API, APIRequest, FORMAT_TYPES, F_HTML, F_JSON, F_JSONLD, F_GZIP,
-    __version__, validate_bbox, validate_datetime, evaluate_limit,
-    validate_subset, landing_page, openapi_, conformance, describe_collections,
-    get_collection_schema,
-)
+    API, APIRequest, CONFORMANCE_CLASSES, __version__, validate_bbox,
+    validate_datetime, evaluate_limit, validate_subset, landing_page, openapi_,
+    conformance, describe_collections, get_collection_schema)
+
+from pygeoapi.formats import FORMAT_TYPES, F_GZIP, F_JSON, F_JSONLD, F_HTML
 from pygeoapi.util import yaml_load, get_api_rules, get_base_url
 
 from tests.util import (get_test_file_path, mock_api_request, mock_flask,
@@ -78,6 +80,20 @@ def config_hidden_resources():
 
 
 @pytest.fixture()
+def config_exclusively_hidden_resources():
+    filename = 'pygeoapi-test-config-exclusively-hidden-resources.yml'
+    with open(get_test_file_path(filename)) as fh:
+        return yaml_load(fh)
+
+
+@pytest.fixture()
+def config_failing_collection():
+    filename = 'pygeoapi-test-config-failing-collection.yml'
+    with open(get_test_file_path(filename)) as fh:
+        return yaml_load(fh)
+
+
+@pytest.fixture()
 def enclosure_api(config_enclosure, openapi):
     """ Returns an API instance with a collection with enclosure links. """
     return API(config_enclosure, openapi)
@@ -94,6 +110,17 @@ def rules_api(config_with_rules, openapi):
 @pytest.fixture()
 def api_hidden_resources(config_hidden_resources, openapi):
     return API(config_hidden_resources, openapi)
+
+
+@pytest.fixture()
+def api_exclusively_hidden_resources(config_exclusively_hidden_resources, openapi): # noqa
+    '''Returns an API instance where all resources are marked as hidden'''
+    return API(config_exclusively_hidden_resources, openapi)
+
+
+@pytest.fixture()
+def api_failing_collection(config_failing_collection, openapi):
+    return API(config_failing_collection, openapi)
 
 
 def test_apirequest(api_):
@@ -266,6 +293,9 @@ def test_apirules_active(config_with_rules, rules_api):
         assert response.status_code == 200
         response = flask_client.get(flask_prefix)
         assert response.status_code in (307, 308)
+        # Ensure that the expose-headers are set regardless of
+        # whether apirules are active or not
+        assert response.headers['Access-Control-Expose-Headers'] == '*'
 
         # Test links on landing page for correct URLs
         response = flask_client.get(flask_prefix, follow_redirects=True)
@@ -328,6 +358,9 @@ def test_apirules_inactive(config, api_):
                flask_client.application.url_for('pygeoapi.conformance')
         response = flask_client.get('/static/img/pygeoapi.png')
         assert response.status_code == 200
+        # Ensure that the expose-headers are set regardless of
+        # whether apirules are active or not
+        assert response.headers['Access-Control-Expose-Headers'] == '*'
 
         # Test trailing slashes
         response = flask_client.get('/')
@@ -506,7 +539,7 @@ def test_root(config, api_):
                for link in root['links'])
     assert any(link['href'].endswith('f=html') and link['rel'] == 'alternate'
                for link in root['links'])
-    assert len(root['links']) == 12
+    assert len(root['links']) == 13
     assert 'title' in root
     assert root['title'] == 'pygeoapi default instance'
     assert 'description' in root
@@ -556,7 +589,7 @@ def test_conformance(config, api_):
 
     assert isinstance(root, dict)
     assert 'conformsTo' in root
-    assert len(root['conformsTo']) == 42
+    assert len(root['conformsTo']) == 44
     assert 'http://www.opengis.net/spec/ogcapi-features-2/1.0/conf/crs' \
            in root['conformsTo']
 
@@ -565,6 +598,37 @@ def test_conformance(config, api_):
     assert rsp_headers['Content-Type'] == FORMAT_TYPES[F_HTML]
     # No language requested: should be set to default from YAML
     assert rsp_headers['Content-Language'] == 'en-US'
+
+
+def test_conformance_does_not_mutate_global_list(config, api_):
+    """Test conformance method does not mutate CONFORMANCE_CLASSES.
+
+    This test verifies that the global CONFORMANCE_CLASSES list is not
+    mutated by calls to the conformance function. The base conformance
+    classes should remain unchanged after multiple calls.
+    """
+
+    # Store the original length and content of the global list
+    original_length = len(CONFORMANCE_CLASSES)
+    original_classes = list(CONFORMANCE_CLASSES)
+
+    req = mock_api_request()
+
+    # Make multiple calls to conformance
+    for _ in range(3):
+        conformance(api_, req)
+
+    # The global list should NOT have been mutated
+    assert len(CONFORMANCE_CLASSES) == original_length, (
+        f'Global CONFORMANCE_CLASSES was mutated! '
+        f'Original length: {original_length}, '
+        f'Current length: {len(CONFORMANCE_CLASSES)}. '
+        f'The conformance() function should create a copy of the list '
+        f'before extending it.'
+    )
+    assert CONFORMANCE_CLASSES == original_classes, (
+        'Global CONFORMANCE_CLASSES content was modified'
+    )
 
 
 def test_describe_collections(config, api_):
@@ -591,7 +655,8 @@ def test_describe_collections(config, api_):
     assert collection['id'] == 'obs'
     assert collection['title'] == 'Observations'
     assert collection['description'] == 'My cool observations'
-    assert len(collection['links']) == 14
+    assert len(collection['links']) == 15
+
     assert collection['extent'] == {
         'spatial': {
             'bbox': [[-180, -90, 180, 90]],
@@ -601,7 +666,11 @@ def test_describe_collections(config, api_):
             'interval': [
                 ['2000-10-30T18:24:39+00:00', '2007-10-30T08:57:29+00:00']
             ],
-            'trs': 'http://www.opengis.net/def/uom/ISO-8601/0/Gregorian'
+            'trs': 'http://www.opengis.net/def/uom/ISO-8601/0/Gregorian',
+            'grid': {
+                'resolution': 'P1D'
+            },
+            'default': '2000-10-30T18:24:39+00:00'
         }
     }
 
@@ -614,8 +683,8 @@ def test_describe_collections(config, api_):
     ]
     for crs in crs_set:
         assert crs in collection['crs']
-    assert collection['storageCRS'] is not None
-    assert collection['storageCRS'] == 'http://www.opengis.net/def/crs/OGC/1.3/CRS84' # noqa
+    assert collection['storageCrs'] is not None
+    assert collection['storageCrs'] == 'http://www.opengis.net/def/crs/OGC/1.3/CRS84' # noqa
     assert 'storageCrsCoordinateEpoch' not in collection
 
     # French language request
@@ -652,9 +721,31 @@ def test_describe_collections(config, api_):
         if crs in default_crs_list:
             contains_default = True
     assert contains_default
-    assert collection['storageCRS'] is not None
-    assert collection['storageCRS'] == 'http://www.opengis.net/def/crs/OGC/1.3/CRS84' # noqa
+    assert collection['storageCrs'] is not None
+    assert collection['storageCrs'] == 'http://www.opengis.net/def/crs/OGC/1.3/CRS84' # noqa
     assert collection['storageCrsCoordinateEpoch'] == 2017.23
+
+    # test custom extents
+    rsp_headers, code, response = describe_collections(
+       api_, req, 'mapserver_world_map')
+
+    collection = json.loads(response)
+
+    assert collection['extent'] == {
+        'spatial': {
+            'bbox': [[-180, -90, 180, 90]],
+            'crs': 'http://www.opengis.net/def/crs/OGC/1.3/CRS84'
+        },
+        'custom-extent': {
+            'definition': 'https://example.org/custom-extent',
+            'interval': [[0, 10]],
+            'unit': '°C',
+            'grid': {
+                'cellsCount': 3,
+                'coordinates': [0, 5, 10]
+            }
+        }
+    }
 
 
 def test_describe_collections_hidden_resources(
@@ -667,6 +758,48 @@ def test_describe_collections_hidden_resources(
 
     collections = json.loads(response)
     assert len(collections['collections']) == 1
+
+
+def test_describe_collections_with_only_hidden_resources(
+    api_exclusively_hidden_resources
+):
+    '''
+    Test an API with only hidden resources to ensure
+    there are no indexing errors when no collections are returned
+    '''
+    req = mock_api_request({})
+    _, code, response = describe_collections(api_exclusively_hidden_resources, req)  # noqa
+    assert code == HTTPStatus.OK
+
+    collections = json.loads(response)
+    assert len(collections['collections']) == 0, \
+        'All collections are hidden so there should be none in the response'
+
+    hidden_collection_name = 'objects'
+    _, code, response = describe_collections(
+        api_exclusively_hidden_resources, req, hidden_collection_name
+    )
+
+    assert code == HTTPStatus.OK
+    collection = json.loads(response)
+    assert collection['title'] == 'GeoJSON objects', \
+        'The collection should have its normal title even if hidden'
+
+
+def test_describe_collections_failing_collection(
+        config_failing_collection, api_failing_collection):
+    req = mock_api_request({})
+    rsp_headers, code, response = describe_collections(api_failing_collection, req)  # noqa
+    assert code == HTTPStatus.OK
+
+    assert len(config_failing_collection['resources']) == 3
+
+    collections = json.loads(response)
+    assert len(collections['collections']) == 2
+
+    req = mock_api_request({})
+    rsp_headers, code, response = describe_collections(api_failing_collection, req, 'cmip5')  # noqa
+    assert code == HTTPStatus.INTERNAL_SERVER_ERROR
 
 
 def test_describe_collections_json_ld(config, api_):
@@ -682,7 +815,7 @@ def test_describe_collections_json_ld(config, api_):
     assert len(expanded['http://schema.org/dataset']) == 1
     dataset = expanded['http://schema.org/dataset'][0]
     assert dataset['@type'][0] == 'http://schema.org/Dataset'
-    assert len(dataset['http://schema.org/distribution']) == 14
+    assert len(dataset['http://schema.org/distribution']) == 15
     assert all(dist['@type'][0] == 'http://schema.org/DataDownload'
                for dist in dataset['http://schema.org/distribution'])
 
@@ -847,7 +980,10 @@ def test_get_exception(config, api_):
     assert content['code'] == 'NoApplicableCode'
     assert content['description'] == 'oops'
 
-    d = api_.get_exception(500, {}, 'html', 'NoApplicableCode', 'oops')
+    d = api_.get_exception(204, {}, 'html', 'NoApplicableCode', 'oops')
+    assert len(d[2]) == 0
+    d = api_.get_exception(204, {}, 'json', 'NoApplicableCode', 'oops')
+    assert len(d[2]) == 0
 
 
 def test_evaluate_limit():
@@ -879,7 +1015,7 @@ def test_evaluate_limit():
     collection = {}
     server = {'default_items': 2, 'max_items': 3, 'on_exceed': 'error'}
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         assert evaluate_limit('40', server, collection) == 40
 
     collection = {'default_items': 10}

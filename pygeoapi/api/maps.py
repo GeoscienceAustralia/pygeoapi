@@ -8,8 +8,9 @@
 #          Ricardo Garcia Silva <ricardo.garcia.silva@geobeyond.it>
 #          Bernhard Mallinger <bernhard.mallinger@eox.at>
 #
-# Copyright (c) 2024 Tom Kralidis
-# Copyright (c) 2022 Francesco Bartoli
+# Copyright (c) 2026 Joana Simoes
+# Copyright (c) 2026 Tom Kralidis
+# Copyright (c) 2025 Francesco Bartoli
 # Copyright (c) 2022 John A Stevenson and Colin Blackburn
 # Copyright (c) 2023 Ricardo Garcia Silva
 # Copyright (c) 2024 Bernhard Mallinger
@@ -43,15 +44,17 @@ from http import HTTPStatus
 import logging
 from typing import Tuple
 
+from pygeoapi.crs import transform_bbox, DEFAULT_CRS, get_uri
+from pygeoapi.formats import F_JSON, FORMAT_TYPES
 from pygeoapi.openapi import get_oas_30_parameters
 from pygeoapi.plugin import load_plugin
-from pygeoapi.provider.base import ProviderGenericError
-from pygeoapi.util import (
-    get_provider_by_type, to_json, filter_providers_by_type,
-    filter_dict_by_key_value
+from pygeoapi.provider import filter_providers_by_type, get_provider_by_type
+from pygeoapi.provider.base import (
+    ProviderGenericError, ProviderInvalidDataError
 )
+from pygeoapi.util import to_json, filter_dict_by_key_value
 
-from . import APIRequest, API, validate_datetime
+from . import APIRequest, API, validate_datetime, validate_subset
 
 LOGGER = logging.getLogger(__name__)
 
@@ -59,11 +62,14 @@ CONFORMANCE_CLASSES = [
     'http://www.opengis.net/spec/ogcapi-maps-1/1.0/conf/core'
 ]
 
+DEFAULT_BBOX = [-180, -90, 180, 90]  # CRS84
+
 
 def get_collection_map(api: API, request: APIRequest,
-                       dataset, style=None) -> Tuple[dict, int, str]:
+                       dataset: str, style: str | None = None
+                       ) -> Tuple[dict, int, str]:
     """
-    Returns a subset of a collection map
+    Returns an image of a collection map
 
     :param request: A request object
     :param dataset: dataset name
@@ -72,9 +78,7 @@ def get_collection_map(api: API, request: APIRequest,
     :returns: tuple of headers, status code, content
     """
 
-    query_args = {
-        'crs': 'CRS84'
-    }
+    query_args = {}
 
     format_ = request.format or 'png'
     headers = request.get_response_headers(**api.api_headers)
@@ -102,7 +106,32 @@ def get_collection_map(api: API, request: APIRequest,
 
     query_args['format_'] = request.params.get('f', 'png')
     query_args['style'] = style
-    query_args['crs'] = request.params.get('bbox-crs', 4326)
+
+    # If there is no crs param, we assume the storage_crs;
+    # if it does not exist or is not supported, use CRS84.
+    try:
+        if 'crs' not in request.params:
+            query_args['crs'] = collection_def.get('storage_crs',
+                                                   DEFAULT_CRS)
+        else:
+            query_args['crs'] = get_uri(request.params['crs'])
+
+    except KeyError:
+        query_args['crs'] = DEFAULT_CRS
+
+    LOGGER.debug(f'Using crs: {query_args['crs']}')
+
+    # If there is no bbox-crs param, we assume CRS84
+    try:
+        if 'bbox-crs' not in request.params:
+            query_args['bbox-crs'] = DEFAULT_CRS
+        else:
+            query_args['bbox-crs'] = get_uri(request.params['bbox-crs'])
+    except KeyError:
+        query_args['bbox-crs'] = DEFAULT_CRS
+
+    LOGGER.debug(f'Using bbox-crs: {query_args['bbox-crs']}')
+
     query_args['transparent'] = request.params.get('transparent', True)
 
     try:
@@ -120,7 +149,8 @@ def get_collection_map(api: API, request: APIRequest,
 
     LOGGER.debug('Processing bbox parameter')
     try:
-        bbox = request.params.get('bbox').split(',')
+        bbox = request.params.get(
+            'bbox').split(',')
         if len(bbox) != 4:
             exception = {
                 'code': 'InvalidParameterValue',
@@ -130,10 +160,11 @@ def get_collection_map(api: API, request: APIRequest,
             LOGGER.error(exception)
             return headers, HTTPStatus.BAD_REQUEST, to_json(
                 exception, api.pretty_print)
+
     except AttributeError:
-        bbox = api.config['resources'][dataset]['extents']['spatial']['bbox']  # noqa
+        bbox = DEFAULT_BBOX
     try:
-        query_args['bbox'] = [float(c) for c in bbox]
+        bbox = [float(c) for c in bbox]
     except ValueError:
         exception = {
             'code': 'InvalidParameterValue',
@@ -143,6 +174,13 @@ def get_collection_map(api: API, request: APIRequest,
         LOGGER.error(exception)
         return headers, HTTPStatus.BAD_REQUEST, to_json(
             exception, api.pretty_print)
+
+    # the transformer function expects the crs to be in a uri format
+    if query_args['bbox-crs'] != query_args['crs']:
+        bbox = transform_bbox(bbox, query_args['bbox-crs'],
+                              query_args['crs'], always_xy=True)
+        LOGGER.debug(f'Transformed bbox: {bbox}')
+    query_args['bbox'] = bbox
 
     LOGGER.debug('Processing datetime parameter')
     datetime_ = request.params.get('datetime')
@@ -155,15 +193,66 @@ def get_collection_map(api: API, request: APIRequest,
             HTTPStatus.BAD_REQUEST, headers, request.format,
             'InvalidParameterValue', msg)
 
+    if 'subset' in request.params:
+        # TODO get subsets from provider
+        subsets = deepcopy(api.config['resources'][dataset]['extents'])
+        subsets.pop('spatial', None)  # bbox
+        subsets.pop('temporal', None)  # datetime
+        LOGGER.debug('Processing subset parameter')
+        try:
+            query_args['subsets'] = validate_subset(
+                request.params['subset'] or '')
+        except (AttributeError, ValueError) as err:
+            msg = f'Invalid subset: {err}'
+            return api.get_exception(
+                HTTPStatus.BAD_REQUEST, headers, format_,
+                'InvalidParameterValue', msg)
+
+        for sk in query_args['subsets'].keys():
+            if sk not in subsets.keys():
+                msg = f'Subset not found; valid values are {subsets}'
+                return api.get_exception(
+                    HTTPStatus.BAD_REQUEST, headers, format_,
+                    'InvalidParameterValue', msg)
+
+    if request.params.get('properties'):
+        try:
+            fields = p.get_fields() or {}
+        except NotImplementedError:
+            msg = 'No properties implemented'
+            headers['Content-Type'] = FORMAT_TYPES[F_JSON]
+            return api.get_exception(
+                HTTPStatus.NOT_IMPLEMENTED, headers, format_,
+                'InvalidParameterValue', msg)
+
+        LOGGER.debug('Processing properties parameter')
+        properties = request.params.get('properties') or []
+        if isinstance(properties, str):
+            properties = properties.split(',')
+
+        if properties and not any((fld in properties)
+                                  for fld in fields.keys()):
+            msg = f'Invalid property; valid property names are {list(fields.keys())}'  # noqa
+            headers['Content-Type'] = FORMAT_TYPES[F_JSON]
+            return api.get_exception(
+                HTTPStatus.BAD_REQUEST, headers, request.format,
+                'InvalidParameterValue', msg)
+
+        query_args['select_properties'] = properties
+
     LOGGER.debug('Generating map')
     try:
         data = p.query(**query_args)
-    except ProviderGenericError as err:
+    except (ProviderGenericError, ProviderInvalidDataError) as err:
+        headers['Content-Type'] = FORMAT_TYPES[F_JSON]
         return api.get_exception(
             err.http_status_code, headers, request.format,
             err.ogc_exception_code, err.message)
 
     mt = collection_def['format']['name']
+
+    headers['Content-Crs'] = query_args['crs']
+    headers['Content-Bbox'] = ','.join(map(str, query_args['bbox']))
 
     if format_ == mt:
         headers['Content-Type'] = collection_def['format']['mimetype']
@@ -182,9 +271,10 @@ def get_collection_map(api: API, request: APIRequest,
 
 
 def get_collection_map_legend(api: API, request: APIRequest,
-                              dataset, style=None) -> Tuple[dict, int, str]:
+                              dataset: str, style: str | None = None
+                              ) -> Tuple[dict, int, str]:
     """
-    Returns a subset of a collection map legend
+    Returns an image of a collection map legend
 
     :param request: A request object
     :param dataset: dataset name
@@ -266,6 +356,9 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
         if map_extension:
             mp = load_plugin('provider', map_extension)
 
+            coll_properties = deepcopy(parameters)['properties']
+            coll_properties['schema']['items']['enum'] = list(mp.fields.keys())
+
             map_f = deepcopy(parameters['f'])
             map_f['schema']['enum'] = [map_extension['format']['name']]
             map_f['schema']['default'] = map_extension['format']['name']
@@ -279,7 +372,7 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
                     'operationId': 'getMap',
                     'parameters': [
                         {'$ref': '#/components/parameters/bbox'},
-                        {'$ref': f"{OPENAPI_YAML['oapif-1']}#/components/parameters/datetime"},  # noqa
+                        {'$ref': f"{OPENAPI_YAML['oamaps']}#/components/parameters/subset"},  # noqa
                         {
                             'name': 'width',
                             'in': 'query',
@@ -329,6 +422,9 @@ def get_oas_30(cfg: dict, locale: str) -> tuple[list[dict[str, str]], dict[str, 
                     }
                 }
             }
+            if coll_properties['schema']['items']['enum']:
+                paths[pth]['get']['parameters'].append(coll_properties)
+
             if mp.time_field is not None:
                 paths[pth]['get']['parameters'].append(
                     {'$ref': f"{OPENAPI_YAML['oapif-1']}#/components/parameters/datetime"})  # noqa
