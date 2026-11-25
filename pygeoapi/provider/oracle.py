@@ -1186,7 +1186,7 @@ class OracleProvider(BaseProvider):
                         LOGGER.error(err)
                         raise ProviderQueryError(err)
 
-                LOGGER.error(f"Error executing/fetching sql_query: {sql_query}")
+                LOGGER.error(f"Error executing/fetching sql_query for identifier {identifier}: {sql_query}")
                 LOGGER.error(err)
                 raise ProviderQueryError()
             #End GA Customisation
@@ -1194,7 +1194,7 @@ class OracleProvider(BaseProvider):
             try:
                 cursor.execute(sql_query, bind_variables)
             except oracledb.Error as err:
-                LOGGER.error(f"Error executing sql_query: {sql_query}")
+                LOGGER.error(f"Error executing sql_query for identifier {identifier}: {sql_query}")
                 LOGGER.error(err)
                 raise ProviderQueryError()
 
