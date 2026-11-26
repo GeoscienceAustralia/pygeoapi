@@ -270,6 +270,7 @@
 
     map.fitBounds(items.getBounds());
 
+    {# Tryout the datatype == record functionality above 
     {% if data['itemtype'] == 'record' %}
     function getBbox(rect) {
         bounds = rect.getBounds();
@@ -303,6 +304,7 @@
     var form = document.getElementById("searchForm");
     form.addEventListener("submit", submitForm);
     {% endif %}
+    # }
     </script>
 {% endif %}
 {% endblock %}
